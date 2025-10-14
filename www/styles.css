@@ -1,0 +1,48 @@
+:root {
+  --bslib-sidebar-main-bg: #f8f8f8;
+}
+.container-fluid{
+    padding: 0!important;
+}
+
+/* .tab-content{
+  padding: 5px 15px 0 15px
+} */
+
+/* 기본 탭 */
+.nav-tabs .nav-link {
+    background-color: #f8f9fa;
+    color: #333;
+    transition: all 0.3s ease;
+}
+
+/* hover */
+.nav-tabs .nav-link:hover {
+    background-color: #e0e6ef;
+    color: #000;
+}
+
+/* 활성화된 탭 버튼 */
+.nav-tabs .nav-link.active {
+    background-color: var(--bs-info) !important; /* 테마 primary 색상 */
+    color: #fff !important;
+    font-weight: bold;
+    border-radius: 6px 6px 0 0;
+}
+
+/* 활성화된 탭 내용 패널 */
+.tab-content .tab-pane.active {
+    border-top: 3px solid var(--bs-info);
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    padding: 20px;
+}
+
+.app-title {
+    text-align: center !important;  /* 테마 CSS보다 우선 적용 */
+    font-size: 2rem;
+    font-weight: bold;
+    padding: 15px;
+    border-radius: 0 0 6px 6px;  
+}

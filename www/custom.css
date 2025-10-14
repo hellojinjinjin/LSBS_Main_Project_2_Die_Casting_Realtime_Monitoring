@@ -1,0 +1,268 @@
+/* ======================
+   전체 레이아웃 / 배경
+   ====================== */
+body {
+    font-family: 'NanumGothic', 'Segoe UI', sans-serif;
+    background-color: #fdf6f0;
+    /* 베이지 톤 배경 */
+    color: #4a3c31;
+    /* 브라운 텍스트 */
+    line-height: 1.6;
+}
+
+/* 앱 제목 */
+.app-title {
+    text-align: center;
+    font-size: 2.2rem;
+    font-weight: bold;
+    margin: 25px 0;
+    padding: 20px;
+    color: #fff;
+    background: linear-gradient(90deg, #f7a072, #f25f5c, #9c6644);
+    border-radius: 12px;
+    letter-spacing: 1px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* ======================
+   네비게이션 탭 (파스텔 단풍)
+   ====================== */
+.nav-tabs {
+    border-bottom: 2px solid #e0c9b6;
+    margin-bottom: 15px;
+}
+
+.nav-tabs .nav-link {
+    background: #ffeedd;
+    color: #4a3c31;
+    font-weight: 500;
+    border: 1px solid #e0c9b6;
+    border-bottom: none;
+    border-radius: 10px 10px 0 0;
+    margin-right: 6px;
+    padding: 10px 18px;
+    transition: all 0.3s ease;
+}
+
+.nav-tabs .nav-link:hover {
+    color: #fff;
+    background-color: #f7a072;
+    /* 파스텔 오렌지 */
+    border-color: #f7a072;
+}
+
+.nav-tabs .nav-link.active {
+    color: #fff;
+    font-weight: bold;
+    background-color: #f25f5c;
+    /* 파스텔 레드 */
+    border-color: #f25f5c;
+    border-bottom: none;
+}
+
+/* 탭 패널 */
+.tab-content .tab-pane {
+    background-color: #fffdf9;
+    border: 1px solid #e0c9b6;
+    border-radius: 0 10px 10px 10px;
+    padding: 25px;
+    box-shadow: 0 2px 8px rgba(156, 102, 68, 0.1);
+    margin-bottom: 20px;
+}
+
+/* ======================
+   카드
+   ====================== */
+.card {
+    border-radius: 12px;
+    border: none;
+    background: #fffdf9;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.08);
+    margin-bottom: 20px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+}
+
+.card-header {
+    font-weight: 600;
+    font-size: 1rem;
+    background: #ffe066;
+    /* 파스텔 옐로우 */
+    color: #4a3c31;
+    border-radius: 12px 12px 0 0;
+    padding: 12px;
+}
+
+/* ======================
+   버튼
+   ====================== */
+.btn {
+    border-radius: 8px;
+    font-weight: 600;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+}
+
+/* 주요 버튼 */
+.btn-primary {
+    background-color: #f7a072;
+    /* 파스텔 오렌지 */
+    border-color: #f7a072;
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background-color: #f25f5c;
+    /* 파스텔 레드 */
+    border-color: #f25f5c;
+}
+
+/* 보조 버튼 */
+.btn-secondary {
+    background-color: #9c6644;
+    border-color: #9c6644;
+    color: #fff;
+}
+
+.btn-secondary:hover {
+    background-color: #6f4d35;
+    border-color: #6f4d35;
+}
+
+/* ======================
+   사이드바
+   ====================== */
+.sidebar {
+    background-color: #fff4e6 !important;
+    /* 따뜻한 베이지 */
+    color: #4a3c31;
+    padding: 15px;
+    border-right: 2px solid #e0c9b6;
+}
+
+.sidebar h4,
+.sidebar h5,
+.sidebar label {
+    color: #4a3c31;
+    font-weight: bold;
+}
+
+/* ======================
+   입력 컨트롤
+   ====================== */
+input,
+select,
+.form-select,
+.form-control {
+    border-radius: 8px !important;
+    border: 1px solid #e0c9b6;
+    background-color: #fffdf9;
+}
+
+/* ======================
+   기타
+   ====================== */
+hr {
+    border-top: 1px solid #e0c9b6;
+    margin: 20px 0;
+}
+
+footer {
+    text-align: center;
+    font-size: 0.85rem;
+    color: #6f4d35;
+    margin-top: 40px;
+    padding: 15px;
+}
+
+
+/* 슬라이더 전체 바탕 라인 */
+.irs--shiny .irs-line {
+    background: linear-gradient(90deg, #ffe0cc, #ffe066, #f7a072, #f25f5c, #9c6644) !important;
+    border-radius: 6px;
+    height: 2px;
+    opacity: 0.9;
+}
+
+/* 선택된 영역 (드래그된 부분) */
+.irs--shiny .irs-bar {
+    background: #f76c22 !important;
+    /* 파스텔 오렌지 */
+    height: 8px;
+    border-radius: 6px;
+}
+
+/* 손잡이 (handle) */
+.irs--shiny .irs-handle {
+    background: #f25f5c !important;
+    border: none;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    top: 22px;
+    /* 위치는 브라우저마다 조정 필요 */
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.irs--shiny .irs-handle:hover {
+    background: #9c6644 !important;
+    /* hover 시 브라운 */
+}
+
+/* 값 표시 (bubble) */
+.irs--shiny .irs-single {
+    background: #9c6644 !important;
+    color: #fff;
+    border-radius: 6px;
+    padding: 2px 6px;
+    font-weight: bold;
+}
+
+.card-body .shiny-data-grid {
+    width: 100% !important;
+    /* 카드 너비를 따라가도록 */
+    overflow-x: auto;
+    /* 내용이 넘치면 스크롤 */
+    margin: 0!important;
+}
+
+.card-body .shiny-data-grid table {
+    width: 100% !important;
+    /* 표 자체도 꽉 채우기 */
+    table-layout: auto;
+    margin: 0!important;
+    /* 셀 너비 자동 */
+}
+
+.dropdown-menu {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border: none;
+    padding: 6px 0;
+    font-size: 15px;
+    min-width: 200px;
+}
+
+.dropdown-item {
+    font-weight: 500;
+}
+
+.dropdown-item:hover {
+    background-color: #f1f3f5;
+    color: #0d6efd !important;
+}
+
+/* 현재 활성 메뉴 강조 */
+.active-menu {
+    background-color: #0d6efd !important;
+    color: #fff !important;
+    font-weight: bold;
+}
