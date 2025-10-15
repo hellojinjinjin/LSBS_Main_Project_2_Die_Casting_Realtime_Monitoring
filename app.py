@@ -41,59 +41,63 @@ is_streaming = reactive.Value(False)
 # ===== 한글 변수명 매핑 =====
 VAR_LABELS = {
     # 용융 단계
-    "molten_temp": "용융 온도(℃)",
+    "molten_temp": "용융 온도",
     "heating_furnace": "용해로 정보",
 
     # 충진 단계
-    "sleeve_temperature": "슬리브 온도(℃)",
-    "EMS_operation_time": "EMS 가동시간(s)",
-    "low_section_speed": "하부 주입속도(cm/s)",
-    "high_section_speed": "상부 주입속도(cm/s)",
-    "molten_volume": "주입 금속량(cc)",
-    "cast_pressure": "주입 압력(bar)",
+    "sleeve_temperature": "슬리브 온도",
+    "EMS_operation_time": "EMS 가동시간",
+    "low_section_speed": "하부 주입속도",
+    "high_section_speed": "상부 주입속도",
+    "molten_volume": "주입 금속량",
+    "cast_pressure": "주입 압력",
 
     # 냉각 단계
-    "upper_mold_temp1": "상부1 금형온도(℃)",
-    "upper_mold_temp2": "상부2 금형온도(℃)",
-    "upper_mold_temp3": "상부3 금형온도(℃)",
-    "lower_mold_temp1": "하부1 금형온도(℃)",
-    "lower_mold_temp2": "하부2 금형온도(℃)",
-    "lower_mold_temp3": "하부3 금형온도(℃)",
-    "Coolant_temperature": "냉각수 온도(℃)",
+    "upper_mold_temp1": "상부1 금형온도",
+    "upper_mold_temp2": "상부2 금형온도",
+    "upper_mold_temp3": "상부3 금형온도",
+    "lower_mold_temp1": "하부1 금형온도",
+    "lower_mold_temp2": "하부2 금형온도",
+    "lower_mold_temp3": "하부3 금형온도",
+    "Coolant_temperature": "냉각수 온도",
 
     # 품질 및 속도
-    "production_cycletime": "생산 사이클(sec)",
-    "biscuit_thickness": "주조물 두께(mm)",
-    "physical_strength": "제품 강도(MPa)",
+    "production_cycletime": "생산 사이클",
+    "biscuit_thickness": "주조물 두께",
+    "physical_strength": "제품 강도",
+    
+    "mold_code": "금형코드",
 }
 
 # ===== 센서 위치 (x, y) =====
 VAR_POSITIONS = {
     # 용융부
-    "molten_temp": (750, 360),
-    "heating_furnace": (810, 380),
+    "molten_temp": (735, 250),
+    "heating_furnace": (735, 450),
 
     # 슬리브 / 주입
-    "sleeve_temperature": (650, 330),
-    "EMS_operation_time": (620, 280),
-    "low_section_speed": (580, 250),
-    "high_section_speed": (580, 210),
-    "molten_volume": (620, 160),
-    "cast_pressure": (590, 120),
+    "sleeve_temperature": (510, 325),
+    "EMS_operation_time": (30, 340),
+    "low_section_speed": (350, 390),
+    "high_section_speed": (350, 135),
+    "molten_volume": (700, 320),
+    "cast_pressure": (520, 360),
 
     # 금형 냉각
-    "upper_mold_temp1": (430, 180),
-    "upper_mold_temp2": (400, 230),
-    "upper_mold_temp3": (370, 280),
-    "lower_mold_temp1": (430, 330),
-    "lower_mold_temp2": (400, 380),
-    "lower_mold_temp3": (370, 430),
-    "Coolant_temperature": (300, 350),
+    "upper_mold_temp1": (30, 30),
+    "upper_mold_temp2": (30, 80),
+    "upper_mold_temp3": (30, 130),
+    "lower_mold_temp1": (530, 110),
+    "lower_mold_temp2": (530, 160),
+    "lower_mold_temp3": (530, 210),
+    "Coolant_temperature": (30, 370),
 
     # 속도/품질
-    "production_cycletime": (200, 460),
-    "biscuit_thickness": (220, 420),
-    "physical_strength": (220, 380),
+    "production_cycletime": (30, 460),
+    "biscuit_thickness": (30, 430),
+    "physical_strength": (30, 400),
+    
+    "mold_code": (350, 480),
 }
 
 # ===== 백엔드 및 폰트 설정 =====
@@ -1084,6 +1088,12 @@ def server(input, output, session):
     @reactive.event(input.cancel_logout)
     def _logout_cancel():
         ui.modal_remove()
+    
+    # ===== 뒤로가기 버튼: 카드 선택 페이지로 복귀 ===== 
+    @reactive.effect 
+    @reactive.event(input.back_btn) 
+    def _go_back(): 
+        page_state.set("menu")
 
     # 페이지 상태에 따라 UI 전환
     @output
@@ -1116,6 +1126,14 @@ def server(input, output, session):
         for code in codes[:-1]:
             inputs.append(ui.input_numeric(f"target_{code}", ui.HTML(f"<span style='color:{mold_colors.get(code, '#000')}; font-weight:bold;'>금형코드 {code}</span>"), value=0, min=0, step=100))
         return ui.div(*inputs)
+    
+    DATA_PATH = pathlib.Path("./data/train_raw.csv")
+    try:
+        df_raw = pd.read_csv(DATA_PATH)
+        print(f"✅ 데이터 로드 완료: {df_raw.shape}")
+    except Exception as e:
+        print("⚠️ 데이터 로드 실패:", e)
+        df_raw = pd.DataFrame()
 
     @render.text
     def remaining_qty():
@@ -1314,10 +1332,15 @@ def server(input, output, session):
 
     @reactive.effect
     @reactive.event(input.reset_stream)
-    def _reset_stream():
+    async def _reset_stream():
+        # 1️⃣ 스트리머 내부 데이터 리셋
         streamer().reset_stream()
         current_data.set(pd.DataFrame())
         is_streaming.set(False)
+
+        # 2️⃣ 화면의 SVG 값 초기화 (— 로 리셋)
+        reset_values = {col: 0.0 for col in display_cols}
+        await session.send_custom_message("updateSensors", reset_values)
 
     # 주기적 업데이트
     @reactive.effect
@@ -1347,67 +1370,25 @@ def server(input, output, session):
     @output
     @render.ui
     def process_svg_inline():
-        def make_item(key: str, label: str, x: int, y: int) -> str:
-            return (
-                f"<text id='var-{key}' x='{x}' y='{y}'>"
-                f"  <tspan class='label'>{label}: </tspan>"
-                f"  <tspan class='value'>—</tspan>"
-                f"</text>"
-            )
-
         svg_items = []
         for key, label in VAR_LABELS.items():
             if key not in VAR_POSITIONS:
                 continue
             x, y = VAR_POSITIONS[key]
-            svg_items.append(make_item(key, label, x, y))
+            svg_items.append(make_item_with_bg(key, label, x, y))
 
         svg_html = "\n".join(svg_items)
 
         return ui.HTML(f"""
-            <div style="
-                position:relative;
-                width:900px;
-                height:500px;
-                margin:auto;
-                border:1px solid #ccc;
-                border-radius:8px;
-                overflow:hidden;
-                background-color:#f8f9fa;">
-                
-                <!-- 배경 이미지 -->
-                <img src="diecast.png" 
-                    style="
-                        position:absolute;
-                        top:0; left:0;
-                        width:100%; height:100%;
-                        object-fit:contain;
-                        z-index:1;"/>
-
-                <!-- SVG 오버레이 -->
-                <div style="
-                    position:absolute; top:0; left:0;
-                    width:100%; height:100%;
-                    z-index:2; pointer-events:none;">
-                    <svg xmlns='http://www.w3.org/2000/svg'
-                        width='100%' height='100%'
-                        viewBox='0 0 900 500'
-                        preserveAspectRatio='xMidYMid meet'>
-                        <style>
-                            text {{
-                                font-family: 'NanumGothic','Malgun Gothic',sans-serif;
-                                font-weight: 700;
-                                font-size: 15px;
-                                fill: #111827;
-                                stroke: #fff;
-                                stroke-width: .6px;
-                                paint-order: stroke;
-                            }}
-                            .value {{ fill:#111827; }}
-                        </style>
-                        {svg_html}
-                    </svg>
-                </div>
+            <div style='position:relative;width:900px;height:500px;margin:auto;'>
+                <img src='die-castings.gif' style='position:absolute;width:100%;height:100%;object-fit:contain;z-index:1;'/>
+                <svg xmlns='http://www.w3.org/2000/svg'
+                    width='100%' height='100%'
+                    viewBox='0 0 900 500'
+                    preserveAspectRatio='xMidYMid meet'
+                    style='position:absolute;z-index:2;pointer-events:none;'>
+                    {svg_html}
+                </svg>
             </div>
         """)
     
@@ -1967,6 +1948,20 @@ def server(input, output, session):
         except Exception:
             plt.figure()
             plt.text(0.5,0.5,"공정별 그래프 생성 불가",ha="center",va="center")
+            
+    def make_item_with_bg(key: str, label: str, x: int, y: int) -> str:
+        return f"""
+        <g id='var-{key}'>
+            <rect x='{x - 5}' y='{y - 18}' rx='4' ry='4'
+                width='200' height='24'
+                fill='rgba(255,255,255,0.75)' stroke='#ddd' stroke-width='0.5'/>
+            <text x='{x}' y='{y}' fill='#111827'
+                font-size='15' font-weight='700'>
+                <tspan class='label'>{label}: </tspan>
+                <tspan class='value'>—</tspan>
+            </text>
+        </g>
+        """
 
 # ======== 앱 실행 ========
 app = App(app_ui, server, static_assets=app_dir / "www")
