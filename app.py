@@ -96,6 +96,9 @@ VAR_POSITIONS = {
     "physical_strength": (220, 380),
 }
 
+
+
+
 # ===== 백엔드 및 폰트 설정 =====
 matplotlib.use("Agg")  # Tkinter 대신 Agg backend 사용 (GUI 불필요)
 app_dir = pathlib.Path(__file__).parent
@@ -1064,7 +1067,7 @@ def server(input, output, session):
         return ""
 
     # ======== 📈 데이터 분석 탭 ========
-    DATA_PATH = pathlib.Path(r"C:\Users\LS\Desktop\LSBS_Main_Project_2_Die_Casting_Realtime_Monitoring\data\train_raw.csv")
+    DATA_PATH = pathlib.Path("./data/train_raw.csv")
     try:
         df_raw = pd.read_csv(DATA_PATH)
         print(f"✅ 데이터 로드 완료: {df_raw.shape}")
