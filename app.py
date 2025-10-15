@@ -115,6 +115,359 @@ pio.templates["nanum"] = pio.templates["plotly_white"].update(
 )
 pio.templates.default = "nanum"
 
+
+
+
+
+# ===== 모델 불러오기 =====
+MODEL_PATH = "./models/model_2.pkl"
+model = joblib.load(MODEL_PATH)
+
+# ===== 데이터 불러오기 =====
+df_raw = pd.read_csv("./data/train_raw.csv")
+
+# ★ 특정 이상치 행 제거
+df_raw = df_raw[
+    (df_raw["low_section_speed"] != 65535) &
+    (df_raw["lower_mold_temp3"] != 65503) &
+    (df_raw["physical_strength"] != 65535)
+]
+
+# 예측용 데이터도 동일 처리
+df_predict = pd.read_csv("./data/train.csv")
+df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace([np.inf, -np.inf], np.nan)
+
+
+# 예측 탭용 (모델 input 그대로)
+df_predict = pd.read_csv("./data/train.csv")
+df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace([np.inf, -np.inf], np.nan)
+
+df_predict = df_predict[
+    (df_predict["low_section_speed"] != 65535) &
+    (df_predict["lower_mold_temp3"] != 65503) &
+    (df_predict["physical_strength"] != 65535)
+]
+
+# 탐색 탭용 (필터링/EDA)
+drop_cols_explore = ["id","line","name","mold_name","date","time", "registration_time"]
+df_explore = df_raw.drop(columns=drop_cols_explore, errors="ignore")  # ← 안전하게
+# mold_code는 남김
+
+
+# 전처리 후 데이터 (모델 학습용)
+df_processed = pd.read_csv("./data/processed_train.csv")
+
+# 컬럼 이름 표준화
+df_processed.columns = df_processed.columns.str.strip().str.lower()
+# 원본 탐색 데이터도 동일하게
+df_explore.columns = df_explore.columns.str.strip().str.lower()
+
+# 혹시 passorfail이 인덱스로 들어갔다면 컬럼으로 리셋
+if "passorfail" not in df_processed.columns and "passorfail" in df_processed.index.names:
+    df_processed = df_processed.reset_index()
+
+
+# ✅ 파생 변수 자동 추가
+derived_cols = ["speed_ratio", "pressure_speed_ratio"]
+for col in derived_cols:
+    if col in df_predict.columns:
+        df_explore[col] = df_predict[col]
+
+# 예측에서 제외할 컬럼
+drop_cols = [
+    "real_time",   # registration_time → real_time
+    "passorfail",
+    # "count",
+    # "global_count",
+    # "monthly_count",
+    # "speed_ratio",
+	# "pressure_speed_ratio",
+    # "shift",
+]
+used_columns = df_predict.drop(columns=drop_cols).columns
+
+# 그룹 분류
+cat_cols = ["mold_code","working","emergency_stop","heating_furnace", "shift", "tryshot_signal"]
+num_cols = [c for c in used_columns if c not in cat_cols]
+
+# ===== 라벨 맵 =====
+label_map = {
+    # 기본 정보 관련
+    "id": "고유 번호",
+    "line": "생산 라인 이름",
+    "name": "장비 이름",
+    "mold_name": "금형 이름",
+    "time": "측정 날짜",
+    "date": "측정 시간",
+
+    # 공정 상태 관련
+    "count": "누적 제품 개수",
+    "working": "장비 가동 여부 (가동 / 멈춤 등)",
+    "emergency_stop": "비상 정지 여부 (ON / OFF)",
+    "registration_time": "데이터 등록 시간",
+    "tryshot_signal": "측정 딜레이 여부",
+
+    # 용융 단계
+    "molten_temp": "용융 온도",
+    "heating_furnace": "용해로 정보",
+
+    # 충진 단계
+    "sleeve_temperature": "주입 관 온도",
+    "ems_operation_time": "전자 교반(EMS) 가동 시간",
+    "EMS_operation_time": "전자 교반(EMS) 가동 시간",
+    "low_section_speed": "하위 구간 주입 속도",
+    "high_section_speed": "상위 구간 주입 속도",
+    "mold_code": "금형 코드",
+    "molten_volume": "주입한 금속 양",
+    "cast_pressure": "주입 압력",
+
+    # 냉각 단계
+    "upper_mold_temp1": "상부1 금형 온도",
+    "upper_mold_temp2": "상부2 금형 온도",
+    "upper_mold_temp3": "상부3 금형 온도",
+    "lower_mold_temp1": "하부1 금형 온도",
+    "lower_mold_temp2": "하부2 금형 온도",
+    "lower_mold_temp3": "하부3 금형 온도",
+    "coolant_temperature": "냉각수 온도",
+    "Coolant_temperature": "냉각수 온도",
+
+    # 공정 속도 관련
+    "facility_operation_cycletime": "장비 전체 사이클 시간",
+    "facility_operation_cycleTime": "장비 전체 사이클 시간",
+    "production_cycletime": "실제 생산 사이클 시간",
+
+    # 품질 및 성능
+    "biscuit_thickness": "주조물 두께",
+    "physical_strength": "제품 강도",
+
+    # 평가
+    "passorfail": "합격/불합격",
+
+    "global_count": "전체 누적 개수",
+    "monthly_count": "월간 누적 개수",
+    "speed_ratio": "상/하부 주입 속도 비율",
+	"pressure_speed_ratio": "주입 압력 비율",
+    "shift": "주/야간 교대",
+}
+
+
+# ===== 라벨 정의 (표시 텍스트 = 한글, 실제 var = 변수명) =====
+labels = [
+    {"id": "label1", "text": label_map["upper_mold_temp1"], "var": "upper_mold_temp1",
+     "x": 200, "y": 85, "w": 120, "h": 30,
+     "arrow_from": (260, 115), "arrow_to": (400, 195)}, 
+
+    {"id": "label2", "text": label_map["lower_mold_temp1"], "var": "lower_mold_temp1",
+     "x": 650, "y": 85, "w": 120, "h": 30,
+     "arrow_from": (710, 115), "arrow_to": (580, 195)}, 
+
+    {"id": "label3", "text": label_map["cast_pressure"], "var": "cast_pressure",
+     "x": 900, "y": 285, "w": 100, "h": 30,
+     "arrow_from": (950, 315), "arrow_to": (780, 395)}, 
+
+    {"id": "label4", "text": label_map["molten_volume"], "var": "molten_volume",
+     "x": 700, "y": 185, "w": 120, "h": 30,
+     "arrow_from": (760, 215), "arrow_to": (780, 315)}, 
+
+    {"id": "label5", "text": label_map["sleeve_temperature"], "var": "sleeve_temperature",
+     "x": 670, "y": 435, "w": 120, "h": 30,
+     "arrow_from": (730, 435), "arrow_to": (600, 395)},  
+
+    {"id": "label6", "text": label_map["high_section_speed"], "var": "high_section_speed",
+     "x": 400, "y": 105, "w": 160, "h": 30,
+     "arrow_from": (480, 135), "arrow_to": (510, 215)}, 
+
+    {"id": "label7", "text": label_map["low_section_speed"], "var": "low_section_speed",
+     "x": 400, "y": 455, "w": 160, "h": 30,
+     "arrow_from": (480, 455), "arrow_to": (510, 355)},
+]
+
+def get_label(col): return label_map.get(col, col)
+
+# ===== Helper: 슬라이더 + 인풋 =====
+def make_num_slider(col):
+    return ui.div(
+        ui.input_slider(
+            f"{col}_slider", get_label(col),
+            min=int(df_predict[col].min()), max=int(df_predict[col].max()),
+            value=int(df_predict[col].mean()), width="100%"
+        ),
+        ui.input_numeric(col, "", value=int(df_predict[col].mean()), width="110px"),
+        style="display: flex; align-items: center; gap: 8px; justify-content: space-between;"
+    )
+
+# ===== 범주형 없음도 추가 ========
+def make_select(col, label=None, width="100%"):
+    label = label if label else get_label(col)
+    if(col == "tryshot_signal"):
+        choices = ["없음"] + sorted(df_predict[col].dropna().unique().astype(str))
+    else:
+        choices = sorted(df_predict[col].dropna().unique().astype(str)) + ["없음"]
+    return ui.input_select(col, label, choices=choices, width=width)
+
+
+def make_svg(labels):
+    parts = []
+    for lbl in labels:
+        # 화살표 시작점: arrow_from 있으면 사용, 없으면 중앙
+        if "arrow_from" in lbl:
+            cx, cy = lbl["arrow_from"]
+        else:
+            cx = lbl["x"] + lbl["w"]/2
+            cy = lbl["y"] + lbl["h"]/2
+
+        x2, y2 = lbl["arrow_to"]
+        text = label_map.get(lbl["var"], lbl["var"])
+
+        parts.append(f"""
+        <g>
+        <rect x="{lbl['x']}" y="{lbl['y']}" width="{lbl['w']}" height="{lbl['h']}" 
+                fill="#e0e6ef" stroke="black"/>
+        <text x="{lbl['x'] + lbl['w']/2}" y="{lbl['y'] + lbl['h']/2}" 
+                fill="black" font-size="14" font-weight="bold"
+                text-anchor="middle" dominant-baseline="middle">{text}</text>
+        <line x1="{cx}" y1="{cy}" x2="{x2}" y2="{y2}" 
+                stroke="red" marker-end="url(#arrow)"/>
+        </g>
+        """)
+    return "\n".join(parts)
+
+svg_code = f"""
+<svg width="1000" height="500" xmlns="http://www.w3.org/2000/svg"
+     style="background:url('die-castings.gif'); background-size:cover;">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="red"/>
+    </marker>
+  </defs>
+  {make_svg(labels)}
+</svg>
+"""
+
+# ===== CSS (카드 전체 클릭영역) =====
+card_click_css = """
+<style>
+/* 개요 전용 카드만 hover 효과 */
+.overview-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+    position: relative;
+}
+
+.overview-card:hover {
+    background-color: #f8f9fa !important;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transform: translateY(-2px);
+}
+
+/* 카드 전체를 클릭 가능하게 하는 투명 버튼 */
+.card-link {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    cursor: pointer;
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+}
+.card-link:hover,
+.card-link:focus,
+.card-link:active {
+    background: transparent !important;
+    box-shadow: none !important;
+}
+</style>
+"""
+
+# ========== 데이터 준비 ==========
+train = pd.read_csv("./data/train_raw.csv")
+train["time"] = pd.to_datetime(train["time"], errors="coerce")
+train["day"] = train["time"].dt.date
+# 몰드코드별 요약
+mold_cycle = (
+    train.groupby("mold_code")["facility_operation_cycleTime"]
+    .mean()
+    .reset_index(name="avg_facility_cycleTime")
+)
+mold_cycle["daily_capacity"] = (86400 / mold_cycle["avg_facility_cycleTime"]).round()
+
+daily_actual = train.groupby(["day", "mold_code"])["count"].agg(["min", "max"]).reset_index()
+daily_actual["daily_actual"] = daily_actual["max"] - daily_actual["min"] + 1
+
+mold_stats = daily_actual.groupby("mold_code")["daily_actual"].agg(
+    min_prod="min", max_prod="max", avg_prod="mean"
+).reset_index()
+
+mold_summary = pd.merge(mold_cycle, mold_stats, on="mold_code")
+
+# mold_code를 문자열로 변환
+mold_summary["mold_code"] = mold_summary["mold_code"].astype(int).astype(str)
+codes = list(mold_summary["mold_code"])
+last_code = codes[-1]
+
+# 색상 팔레트
+cmap = cm.get_cmap("tab10", len(codes))
+mold_colors = {code: mcolors.to_hex(cmap(i)) for i, code in enumerate(codes)}
+
+# ================================
+# 권장 세팅값 계산
+# ================================
+def smooth_series(series, window=5):
+    smoothed = series.rolling(window=window, center=True, min_periods=1).mean()
+    Q1, Q3 = smoothed.quantile(0.25), smoothed.quantile(0.75)
+    IQR = Q3 - Q1
+    lower, upper = Q1 - 1.5*IQR, Q3 + 1.5*IQR
+    filtered = smoothed[(smoothed >= lower) & (smoothed <= upper)]
+    return filtered.dropna()
+
+setting_cols = [
+    "molten_temp",
+    "upper_mold_temp1","upper_mold_temp2","upper_mold_temp3",
+    "lower_mold_temp1","lower_mold_temp2","lower_mold_temp3",
+    "sleeve_temperature","cast_pressure","biscuit_thickness",
+    "physical_strength","Coolant_temperature"
+]
+
+setting_table = {}
+for code, df in train.groupby("mold_code"):
+    settings = {}
+    for col in setting_cols:
+        smoothed = smooth_series(df[col].dropna())
+        if len(smoothed) == 0:
+            settings[col] = df[col].mean()
+            continue
+        try:
+            mode_val = stats.mode(smoothed, keepdims=True)[0][0]
+            settings[col] = mode_val
+        except Exception:
+            settings[col] = smoothed.mean()
+    setting_table[str(code)] = settings  # 🔑 mold_code를 문자열로 저장
+
+setting_df = pd.DataFrame(setting_table).T.reset_index().rename(columns={"index": "mold_code"})
+setting_df["mold_code"] = setting_df["mold_code"].astype(str)  # 문자열로 통일
+
+# ================================
+# 생산 시뮬레이션 탭 비율 그래프
+# ================================
+train_raw = pd.read_csv("./data/train_raw.csv")
+
+if "date" in train_raw.columns and "time" in train_raw.columns:
+    train_raw["real_time"] = pd.to_datetime(
+        train_raw["date"].astype(str) + " " + train_raw["time"].astype(str),
+        errors="coerce"
+    )
+elif "registration_time" in train_raw.columns:
+    train_raw["real_time"] = pd.to_datetime(train_raw["registration_time"], errors="coerce")
+else:
+    raise ValueError("date/time 또는 registration_time 컬럼을 확인해주세요.")
+
+train_raw["date_only"] = train_raw["real_time"].dt.date
+
+# 날짜별 mold_code 생산 개수
+daily_mold = train_raw.groupby(["date_only", "mold_code"]).size().reset_index(name="count")
+pivot_count = daily_mold.pivot(index="date_only", columns="mold_code", values="count").fillna(0)
+
+
+
 # ======== 전역 HEAD (favicon, CSS 등) ========
 global_head = ui.head_content(
     ui.tags.link(rel="icon", type="image/x-icon", href="favicon.ico"),
@@ -359,7 +712,158 @@ def main_page(selected_tab: str):
     }
     tab_contents = {
         "field": field_dashboard_ui(),  # ✅ 실시간 대시보드 삽입
-        "quality": ui.h5("여기에 품질 모니터링 내용을 표시합니다."),
+        # "quality": ui.h5("여기에 품질 모니터링 내용을 표시합니다."),
+
+        # 🧭 품질 모니터링 (예측 시뮬레이션 UI 포함)
+        "quality": ui.navset_tab(
+            ui.nav_panel("예측",
+                ui.div(
+                    ui.card(
+                        ui.card_header("입력 변수", style="background-color:#f8f9fa; text-align:center;"),
+
+                        # 생산 환경 정보 카드
+                        ui.card(
+                            ui.card_header("생산 환경 정보", style="text-align:center;"),
+                            ui.layout_columns(
+                                ui.div(
+                                    "생산 라인: A라인",
+                                    style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
+                                ),
+                                ui.div(
+                                    "장비 이름: DC Machine 01",
+                                    style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
+                                ),
+                                ui.div(
+                                    "금형 이름: Mold-01",
+                                    style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
+                                ),
+                                col_widths=[4, 4, 4]
+                            )
+                        ),
+
+                        # === 공정 상태 관련 ===
+                        ui.card(
+                            ui.card_header("공정 상태 관련", style=""),
+                            ui.layout_columns(
+                                ui.input_numeric("count", "일조 누적 제품 개수", value=1000),
+                                ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=20000),
+                                ui.input_numeric("global_count", "전체 누적 제품 개수", value=100000),
+                                ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=95),
+                                ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=90),
+                                ui.input_select("working", "장비 가동 여부", choices=["가동", "정지"]),
+                                ui.input_select("emergency_stop", "비상 정지 여부", choices=["정상", "비상정지"]),
+                                ui.input_select("tryshot_signal", "측정 딜레이 여부", choices=["없음", "있음"]),
+                                ui.input_select("shift", "근무조", choices=["주간", "야간"]),
+                                col_widths=[3,3,3,3]
+                            )
+                        ),
+
+                        # === 용융 단계 ===
+                        ui.card(
+                            ui.card_header("용융 단계", style=""),
+                            ui.layout_columns(
+                                ui.input_slider("molten_temp", "용융 온도(℃)", 600, 750, 680),
+                                ui.input_select("heating_furnace", "용해로", choices=["F1", "F2", "F3"]),
+                                col_widths=[6,6]
+                            )
+                        ),
+
+                        # === 충진 단계 ===
+                        ui.card(
+                            ui.card_header("충진 단계", style=""),
+                            ui.layout_columns(
+                                ui.input_slider("sleeve_temperature", "슬리브 온도", 100, 200, 150),
+                                ui.input_slider("EMS_operation_time", "EMS 작동 시간", 0, 10, 5),
+                                ui.input_slider("low_section_speed", "저속 구간 속도", 0, 2, 1),
+                                ui.input_slider("high_section_speed", "고속 구간 속도", 0, 5, 3),
+                                ui.input_slider("molten_volume", "용탕량", 0, 100, 50),
+                                ui.input_slider("cast_pressure", "주조 압력", 0, 200, 100),
+                                ui.input_select("mold_code", "금형 코드", choices=["M1", "M2", "M3"]),
+                                col_widths=[3,3,3,3]
+                            )
+                        ),
+
+                        # === 냉각 단계 ===
+                        ui.card(
+                            ui.card_header("냉각 단계", style=""),
+                            ui.layout_columns(
+                                ui.input_slider("upper_mold_temp1", "상형 온도1", 0, 300, 150),
+                                ui.input_slider("upper_mold_temp2", "상형 온도2", 0, 300, 160),
+                                ui.input_slider("upper_mold_temp3", "상형 온도3", 0, 300, 155),
+                                ui.input_slider("lower_mold_temp1", "하형 온도1", 0, 300, 140),
+                                ui.input_slider("lower_mold_temp2", "하형 온도2", 0, 300, 145),
+                                ui.input_slider("lower_mold_temp3", "하형 온도3", 0, 300, 150),
+                                ui.input_slider("Coolant_temperature", "냉각수 온도", 0, 100, 25),
+                                col_widths=[3,3,3,3]
+                            )
+                        ),
+
+                        # === 공정 속도 관련 ===
+                        ui.card(
+                            ui.card_header("공정 속도 관련", style=""),
+                            ui.layout_columns(
+                                ui.input_slider("facility_operation_cycleTime", "설비 주기", 0, 100, 50),
+                                ui.input_slider("production_cycletime", "생산 주기", 0, 100, 55),
+                                col_widths=[6,6]
+                            )
+                        ),
+
+                        # === 품질 및 성능 ===
+                        ui.card(
+                            ui.card_header("품질 및 성능", style=""),
+                            ui.layout_columns(
+                                ui.input_slider("biscuit_thickness", "비스킷 두께", 0, 10, 5),
+                                ui.input_slider("physical_strength", "물리적 강도", 0, 100, 70),
+                                col_widths=[6,6]
+                            )
+                        )
+                    ),
+                    style="max-width:1200px; margin:0 auto;"
+                ),
+
+                ui.br(),
+
+                # === 예측 실행 카드 (하단 고정) ===
+                ui.div(
+                    ui.card(
+                        ui.card_header(
+                            ui.div(
+                                [
+                                    ui.input_action_button("predict_btn", "예측 실행", class_="btn btn-primary btn-lg", style="flex:1;"),
+                                    ui.input_action_button("reset_btn", ui.HTML('<i class="fa-solid fa-rotate-left"></i>'),
+                                                           class_="btn btn-secondary btn-lg",
+                                                           style="margin-left:10px; width:60px;")
+                                ],
+                                style="display:flex; align-items:center; width:100%;"
+                            ),
+                            style="background-color:#f8f9fa; text-align:center;"
+                        ),
+                        ui.output_ui("prediction_result")
+                    ),
+                    style="""
+                        position: sticky;
+                        bottom: 1px;
+                        z-index: 1000;
+                        max-width: 1200px;
+                        margin: 0 auto;
+                        width: 100%;
+                    """
+                ),
+            ),
+
+            ui.nav_panel("개선 방안",
+                ui.card(
+                    ui.card_header("불량 기여 요인 Top 5", style="text-align:center;"),
+                    ui.output_plot("local_factor_plot"),
+                    ui.hr(),
+                    ui.output_ui("local_factor_desc")
+                )
+            )
+        ),
+
+
+
+
         "analysis": ui.h5("여기에 데이터 분석 결과를 표시합니다.")
     }
 
