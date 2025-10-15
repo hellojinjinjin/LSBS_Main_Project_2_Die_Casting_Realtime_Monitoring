@@ -672,33 +672,44 @@ def menu_page():
 
 def field_dashboard_ui():
     return ui.div(
-        {"style": "display:grid; grid-template-columns:1fr 2fr; gap:20px;"},
-        ui.card(
-            ui.card_header("스트리밍 제어"),
-            ui.input_action_button("start_stream", "▶ 시작", class_="btn btn-success me-1"),
-            ui.input_action_button("pause_stream", "⏸ 일시정지", class_="btn btn-warning me-1"),
-            ui.input_action_button("reset_stream", "🔄 리셋", class_="btn btn-secondary"),
-            ui.hr(),
-            ui.output_ui("stream_status"),
-        ),
+        {"style": "display:flex; flex-direction:column; gap:20px;"},  # 🔹 세로 2행 구성
+        # ──────────────── 1행: 제어 + 공정 상태 ────────────────
         ui.div(
-            {"style": "display:flex; flex-direction:column; gap:20px;"},
+            {
+                "style": (
+                    "display:grid; grid-template-columns:1fr 2fr; gap:20px;"
+                )
+            },
+            ui.card(
+                ui.card_header("스트리밍 제어"),
+                ui.input_action_button("start_stream", "▶ 시작", class_="btn btn-success me-1"),
+                ui.input_action_button("pause_stream", "⏸ 일시정지", class_="btn btn-warning me-1"),
+                ui.input_action_button("reset_stream", "🔄 리셋", class_="btn btn-secondary"),
+                ui.hr(),
+                ui.output_ui("stream_status"),
+            ),
             ui.card(
                 ui.card_header("🧩 주조 공정 실시간 상태"),
-                # ✅ PNG 그림 삽입
-                # ui.tags.img(
-                #     {
-                #         "src": "diecast.png",  # ./www/diecast.png 경로
-                #         "style": (
-                #             "width:100%; max-width:900px; height:auto; "
-                #             "border:2px solid #d0d7de; border-radius:8px; "
-                #             "box-shadow:0 0 6px rgba(0,0,0,0.1);"
-                #         )
-                #     }
-                # ),
-                ui.output_ui("process_svg_inline")  # SVG와 병행 표시 가능
+                ui.output_ui("process_svg_inline"),
+                style="width:100%;"
             ),
-        )
+        ),
+
+        # ──────────────── 2행: 실시간 데이터 표 ────────────────
+        ui.card(
+            ui.card_header("📊 실시간 데이터"),
+            ui.div(
+                ui.output_data_frame("recent_data_table"),
+                # 🔹 스크롤이 생기도록 wrapping div에 명시적 width/overflow 지정
+                style=(
+                    "width:100%; "
+                    "overflow-x:auto; overflow-y:auto; "  # 가로/세로 스크롤 모두 허용
+                    "max-height:500px; "  # 너무 길면 세로 스크롤
+                    "display:block;"
+                )
+            ),
+            style="width:100%;"
+        ),
     )
 
 def load_svg_inline():
@@ -1320,12 +1331,17 @@ def server(input, output, session):
         return fig
 
     @output
-    @render.table
+    @render.data_frame
     def recent_data_table():
         df = current_data()
-        if df.empty:
-            return pd.DataFrame({"상태": ["데이터 없음"]})
-        return df.tail(10).round(2)
+        if df is None or df.empty:
+            # 🔹 최소한 1개 컬럼을 가진 더미 DataFrame 반환
+            return pd.DataFrame({"데이터": ["현재 수신된 데이터가 없습니다."]})
+        
+        # 🔹 숫자형만 정리 + NaN → "-"
+        df = df.copy()
+        df = df.round(2).fillna("-")
+        return df.reset_index(drop=True)
 
     # 버튼 동작
     @reactive.effect
