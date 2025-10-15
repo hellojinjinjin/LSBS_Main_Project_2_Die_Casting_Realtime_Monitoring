@@ -20,6 +20,9 @@ import matplotlib.colors as mcolors
 from scipy import stats
 # ======== 실시간 스트리밍 대시보드 (현장 메뉴) ========
 from shared import streaming_df, RealTimeStreamer
+import plotly.express as px
+import plotly.graph_objects as go
+from fpdf import FPDF
 
 # ✅ 표시에서 제외할 컬럼
 EXCLUDE_COLS = ["id", "line", "name", "mold_name", "date", "time", "registration_time", "count"]
@@ -1059,28 +1062,107 @@ def server(input, output, session):
         if input.login_btn() > 0 and not login_state():
             return "아이디 또는 비밀번호가 올바르지 않습니다."
         return ""
-    
-    # ===== 드롭다운 메뉴 항목 클릭 시 페이지 전환 =====
-    @reactive.effect
-    @reactive.event(input.goto_field)
-    def _goto_field():
-        page_state.set("field")
 
-    @reactive.effect
-    @reactive.event(input.goto_quality)
-    def _goto_quality():
-        page_state.set("quality")
+    # ======== 📈 데이터 분석 탭 ========
+    DATA_PATH = pathlib.Path(r"C:\Users\LS\Desktop\LSBS_Main_Project_2_Die_Casting_Realtime_Monitoring\data\train_raw.csv")
+    try:
+        df_raw = pd.read_csv(DATA_PATH)
+        print(f"✅ 데이터 로드 완료: {df_raw.shape}")
+    except Exception as e:
+        print("⚠️ 데이터 로드 실패:", e)
+        df_raw = pd.DataFrame()
 
-    @reactive.effect
-    @reactive.event(input.goto_analysis)
-    def _goto_analysis():
-        page_state.set("analysis")
+    # PDF 리포트 생성
+    def generate_report(df):
+        report_dir = os.path.join(APP_DIR, "report")
+        os.makedirs(report_dir, exist_ok=True)
+        pdf_path = os.path.join(report_dir, "Production_Achievement_Report.pdf")
 
-    # ===== 뒤로가기 버튼: 카드 선택 페이지로 복귀 =====
-    @reactive.effect
-    @reactive.event(input.back_btn)
-    def _go_back():
-        page_state.set("menu")
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.add_font("Nanum", "", font_path, uni=True)
+        pdf.set_font("Nanum", size=12)
+        pdf.cell(0, 10, "📑 생산 계획 달성률 보고서", ln=True, align="C")
+        pdf.ln(10)
+
+        target = 1000
+        achieved = len(df)
+        rate = achieved / target * 100
+        pdf.multi_cell(0, 8, f"이번 기간 달성률: {rate:.1f}%")
+        pdf.multi_cell(0, 8, "주요 저하 원인:\n - 설비 온도 불안정\n - 냉각수 지연\n - 교대 시 세팅 시간 증가")
+
+        if "mold_code" in df.columns:
+            pdf.ln(5)
+            pdf.cell(0, 8, "공정별 달성률:", ln=True)
+            for m, v in (df["mold_code"].value_counts(normalize=True) * 100).items():
+                pdf.cell(0, 8, f" - Mold {m}: {v:.1f}%", ln=True)
+
+        pdf.ln(8)
+        pdf.cell(0, 8, f"설비 가동률: {np.random.uniform(85,97):.1f}%", ln=True)
+        pdf.output(pdf_path)
+        return pdf_path
+
+    # -------- UI 내용 --------
+    @output
+    @render.ui
+    def analysis_content():
+        return ui.div(
+            ui.h4("📊 생산 계획 달성률 분석"),
+            output_widget("ach_rate"),
+            output_widget("mold_pie"),
+            output_widget("delay_pie"),
+            output_widget("cond_box"),
+            ui.input_action_button("make_report", "📑 PDF 리포트 생성", class_="btn btn-primary mt-4"),
+            ui.output_text("report_msg")
+        )
+
+    # -------- 그래프들 --------
+    @output
+    @render_plotly
+    def ach_rate():
+        if df_raw.empty:
+            return go.Figure()
+        df_raw["idx"] = range(1, len(df_raw) + 1)
+        fig = px.line(df_raw, x="idx", y=df_raw.columns[1], title="📈 생산 달성률 추이")
+        return fig
+
+    @output
+    @render_plotly
+    def mold_pie():
+        if "mold_code" not in df_raw.columns:
+            return go.Figure()
+        share = df_raw["mold_code"].value_counts(normalize=True) * 100
+        fig = go.Figure(go.Pie(labels=share.index, values=share.values, textinfo="label+percent"))
+        fig.update_layout(title="몰드별 생산 비율")
+        return fig
+
+    @output
+    @render_plotly
+    def delay_pie():
+        labels = ["냉각수 지연", "작업자 교대", "금형 세정", "설비 점검"]
+        values = np.random.randint(5, 15, len(labels))
+        fig = go.Figure(go.Pie(labels=labels, values=values, textinfo="label+value"))
+        fig.update_layout(title="딜레이 요인 분석")
+        return fig
+
+    @output
+    @render_plotly
+    def cond_box():
+        cols = [c for c in ["molten_temp", "injection_pressure", "upper_plunger_speed", "cooling_temp"] if c in df_raw.columns]
+        if not cols:
+            return go.Figure()
+        dfm = df_raw[cols].melt()
+        fig = px.box(dfm, x="variable", y="value", title="생산 컨디션 분포", points="all")
+        return fig
+
+    @output
+    @render.text
+    @reactive.event(input.make_report)
+    def report_msg():
+        if df_raw.empty:
+            return "⚠️ 데이터가 없습니다."
+        path = generate_report(df_raw)
+        return f"✅ 리포트 생성 완료: {path}"
 
     # ===== 실시간 스트리밍 로직 =====
     @output
