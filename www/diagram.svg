@@ -1,0 +1,22 @@
+<svg width="800" height="300" xmlns="http://www.w3.org/2000/svg">
+  <!-- 배경 -->
+  <rect width="100%" height="100%" fill="#f9f9f9"></rect>
+
+  <!-- 용탕 탱크 -->
+  <rect x="50" y="100" width="100" height="100" fill="#f2a654" stroke="#333" stroke-width="2"></rect>
+  <text id="molten_temp" x="100" y="165" text-anchor="middle" font-size="16" font-weight="bold" fill="#222">
+    molten_temp: --
+  </text>
+
+  <!-- 금형 구간 -->
+  <rect x="250" y="80" width="200" height="140" fill="#cfd8dc" stroke="#333" stroke-width="2"></rect>
+  <text id="cast_pressure" x="350" y="150" text-anchor="middle" font-size="16" font-weight="bold" fill="#222">
+    cast_pressure: --
+  </text>
+
+  <!-- 출력 제품 -->
+  <rect x="500" y="120" width="80" height="60" fill="#b0bec5" stroke="#333" stroke-width="2"></rect>
+  <text id="product" x="540" y="155" text-anchor="middle" font-size="16" font-weight="bold" fill="#222">
+    Product
+  </text>
+</svg>
