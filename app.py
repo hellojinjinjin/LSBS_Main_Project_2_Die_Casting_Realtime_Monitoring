@@ -547,6 +547,14 @@ global_head = ui.head_content(
         }
       });
     """),
+    ui.tags.script("""
+    Shiny.addCustomMessageHandler("updateGif", function(data) {
+        const img = document.getElementById("process_gif");
+        if (!img) return;
+        // ⚡ 캐시 무효화를 위해 timestamp 붙임
+        img.src = data.src + "?t=" + new Date().getTime();
+    });
+    """),
 )
 
 # ======== 상태 저장 ========
@@ -1333,14 +1341,37 @@ def server(input, output, session):
     @reactive.effect
     @reactive.event(input.reset_stream)
     async def _reset_stream():
-        # 1️⃣ 스트리머 내부 데이터 리셋
         streamer().reset_stream()
         current_data.set(pd.DataFrame())
         is_streaming.set(False)
 
-        # 2️⃣ 화면의 SVG 값 초기화 (— 로 리셋)
         reset_values = {col: 0.0 for col in display_cols}
         await session.send_custom_message("updateSensors", reset_values)
+
+    # === GIF 표시 제어 (스트리밍 상태 연동) ===
+    @reactive.effect
+    @reactive.event(input.start_stream)
+    async def _gif_start():
+        # ▶ 시작 시 GIF 표시
+        await session.send_custom_message("updateGif", {"src": "die-castings.gif"})
+
+    @reactive.effect
+    @reactive.event(input.pause_stream)
+    async def _gif_pause():
+        # ⏸ 일시정지 시 PNG 표시
+        await session.send_custom_message("updateGif", {"src": "die-castings.png"})
+
+    @reactive.effect
+    @reactive.event(input.reset_stream)
+    async def _gif_reset():
+        # 🔄 리셋 시 PNG 표시
+        await session.send_custom_message("updateGif", {"src": "die-castings.png"})
+
+    # ✅ 스트리밍이 중단 상태일 때도 자동 PNG 표시 유지
+    @reactive.effect
+    def _sync_gif_state():
+        if not is_streaming():
+            session.send_custom_message("updateGif", {"src": "die-castings.png"})
 
     # 주기적 업데이트
     @reactive.effect
@@ -1348,7 +1379,7 @@ def server(input, output, session):
         if not is_streaming():
             return
 
-        reactive.invalidate_later(1)
+        reactive.invalidate_later(2)
         s = streamer()
         next_batch = s.get_next_batch(1)
         if next_batch is not None:
@@ -1381,7 +1412,9 @@ def server(input, output, session):
 
         return ui.HTML(f"""
             <div style='position:relative;width:900px;height:500px;margin:auto;'>
-                <img src='die-castings.gif' style='position:absolute;width:100%;height:100%;object-fit:contain;z-index:1;'/>
+                <!-- ✅ 초기 상태는 PNG (정지 상태) -->
+                <img id='process_gif' src='die-castings.png'
+                    style='position:absolute;width:100%;height:100%;object-fit:contain;z-index:1;'/>
                 <svg xmlns='http://www.w3.org/2000/svg'
                     width='100%' height='100%'
                     viewBox='0 0 900 500'
@@ -1391,7 +1424,6 @@ def server(input, output, session):
                 </svg>
             </div>
         """)
-    
 
 
     # --- 동적 필터 UI ---
