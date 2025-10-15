@@ -1394,19 +1394,37 @@ def server(input, output, session):
     
 
 
-    for col in num_cols:
-        @reactive.effect
-        @reactive.event(input[col])
-        def _(col=col):
-            update_slider(f"{col}_slider", value=input[col]())
-        @reactive.effect
-        @reactive.event(input[f"{col}_slider"])
-        def _(col=col):
-            update_numeric(col, value=input[f"{col}_slider"]())
+    # --- 동적 필터 UI ---
+    @output
+    @render.ui
+    def filter_ui():
+        var = input.var()
+        if var not in df_explore.columns:
+            return None
 
-    @reactive.effect
-    @reactive.event(input.reset_btn)
-    def _():
+        # registration_time → datetime slider (10분 단위)
+        if var == "registration_time":
+            times = pd.to_datetime(df_explore["registration_time"], errors="coerce")
+            times = times.dropna()
+            if times.empty:
+                return ui.markdown("⚠️ registration_time 컬럼에 유효한 datetime 값이 없습니다.")
+            min_t, max_t = times.min(), times.max()
+
+            # 초기 범위: 최대값 - 10분 ~ 최대값
+            min_t, max_t = times.min(), times.max()
+            # init_end = min_t + pd.Timedelta(minutes=10)
+            # if init_end > max_t:
+            #     init_end = max_t
+
+            return ui.input_slider(
+                "ts_range",
+                "시간 범위 선택",
+                min=min_t, max=max_t,
+                value=[min_t, max_t],
+                step=600,
+                time_format="%Y-%m-%d %H:%M"
+            )
+
         # 범주형 변수
         if not pd.api.types.is_numeric_dtype(df_explore[var]):
             categories = df_explore[var].dropna().astype(str).unique().tolist()
