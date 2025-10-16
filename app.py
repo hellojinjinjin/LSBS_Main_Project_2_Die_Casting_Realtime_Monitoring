@@ -100,6 +100,9 @@ VAR_POSITIONS = {
     "mold_code": (350, 480),
 }
 
+
+
+
 # ===== 백엔드 및 폰트 설정 =====
 matplotlib.use("Agg")  # Tkinter 대신 Agg backend 사용 (GUI 불필요)
 app_dir = pathlib.Path(__file__).parent
