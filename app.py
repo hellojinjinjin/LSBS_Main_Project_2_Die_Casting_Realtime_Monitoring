@@ -24,59 +24,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from fpdf import FPDF
 
-# ===== 품질 모니터링용 SPC 관리도 =====
-def calc_xr_chart(df, var='cast_pressure', subgroup_size=5):
-    if df.empty:
-        return None, None, (None, None, None, None)
-    df = df.tail(subgroup_size * 10).copy()
-    df['group'] = np.floor(np.arange(len(df)) / subgroup_size)
-    grouped = df.groupby('group')[var]
-    xbar = grouped.mean()
-    R = grouped.max() - grouped.min()
-    Xbar_bar, R_bar = xbar.mean(), R.mean()
-    A2, D3, D4 = 0.577, 0, 2.114   # n=5 기준
-    return xbar, R, (
-        Xbar_bar + A2 * R_bar, Xbar_bar - A2 * R_bar,
-        D4 * R_bar, D3 * R_bar
-    )
-
-
-def calc_p_chart(df, var='passorfail', window=50):
-    if df.empty or var not in df:
-        return None, None, None
-    df = df.tail(window)
-    p_bar = df[var].mean()
-    n = len(df)
-    sigma_p = np.sqrt(p_bar * (1 - p_bar) / n)
-    return p_bar, p_bar + 3*sigma_p, p_bar - 3*sigma_p
-
-
-def plot_xr_chart_matplotlib(xbar, R, limits):
-    fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
-    if xbar is None or R is None:
-        for ax in axes: ax.axis("off")
-        axes[0].text(0.5,0.5,"데이터 부족",ha="center",va="center")
-        return fig
-    UCLx,LCLx,UCLr,LCLr = limits
-    axes[0].plot(xbar.index,xbar.values,marker='o'); axes[0].axhline(xbar.mean(),c='g')
-    axes[0].axhline(UCLx,c='r',ls='--'); axes[0].axhline(LCLx,c='r',ls='--')
-    axes[0].set_title("X-bar 관리도"); axes[0].grid(True,ls='--',alpha=.5)
-    axes[1].plot(R.index,R.values,marker='o'); axes[1].axhline(R.mean(),c='g')
-    axes[1].axhline(UCLr,c='r',ls='--'); axes[1].axhline(LCLr,c='r',ls='--')
-    axes[1].set_title("R 관리도"); axes[1].grid(True,ls='--',alpha=.5)
-    plt.tight_layout(); return fig
-
-
-def plot_p_chart_matplotlib(p_bar, UCL, LCL):
-    fig, ax = plt.subplots(figsize=(8,4))
-    if p_bar is None:
-        ax.axis("off"); ax.text(0.5,0.5,"데이터 부족",ha="center",va="center"); return fig
-    ax.hlines([p_bar,UCL,LCL],0,1,colors=['g','r','r'],linestyles=['-','--','--'])
-    ax.text(0.5,p_bar,f"불량률 {p_bar*100:.2f}%",ha='center',va='bottom',fontsize=12)
-    ax.set_ylim(0,max(1,UCL*1.2)); ax.set_title("P 관리도 (실시간 불량률)")
-    ax.grid(True,ls='--',alpha=.5); return fig
-
-
 # ✅ 표시에서 제외할 컬럼
 EXCLUDE_COLS = ["id", "line", "name", "mold_name", "date", "time", "registration_time", "count"]
 
@@ -1566,7 +1513,20 @@ def server(input, output, session):
                 </svg>
             </div>
         """)
-
+    
+    def make_item_with_bg(key: str, label: str, x: int, y: int) -> str:
+        return f"""
+        <g id='var-{key}'>
+            <rect x='{x - 5}' y='{y - 18}' rx='4' ry='4'
+                width='200' height='24'
+                fill='rgba(255,255,255,0.75)' stroke='#ddd' stroke-width='0.5'/>
+            <text x='{x}' y='{y}' fill='#111827'
+                font-size='15' font-weight='700'>
+                <tspan class='label'>{label}: </tspan>
+                <tspan class='value'>—</tspan>
+            </text>
+        </g>
+        """
 
     # --- 동적 필터 UI ---
     @output
@@ -2141,19 +2101,92 @@ def server(input, output, session):
             plt.figure()
             plt.text(0.5,0.5,"공정별 그래프 생성 불가",ha="center",va="center")
             
-    def make_item_with_bg(key: str, label: str, x: int, y: int) -> str:
-        return f"""
-        <g id='var-{key}'>
-            <rect x='{x - 5}' y='{y - 18}' rx='4' ry='4'
-                width='200' height='24'
-                fill='rgba(255,255,255,0.75)' stroke='#ddd' stroke-width='0.5'/>
-            <text x='{x}' y='{y}' fill='#111827'
-                font-size='15' font-weight='700'>
-                <tspan class='label'>{label}: </tspan>
-                <tspan class='value'>—</tspan>
-            </text>
-        </g>
-        """
+    # ===== 품질 모니터링용 SPC 관리도 =====
+    def calc_xr_chart(df, var='cast_pressure', subgroup_size=5):
+        if df.empty:
+            return None, None, (None, None, None, None)
+        df = df.tail(subgroup_size * 10).copy()
+        df['group'] = np.floor(np.arange(len(df)) / subgroup_size)
+        grouped = df.groupby('group')[var]
+        xbar = grouped.mean()
+        R = grouped.max() - grouped.min()
+        Xbar_bar, R_bar = xbar.mean(), R.mean()
+        A2, D3, D4 = 0.577, 0, 2.114   # n=5 기준
+        return xbar, R, (
+            Xbar_bar + A2 * R_bar, Xbar_bar - A2 * R_bar,
+            D4 * R_bar, D3 * R_bar
+        )
+
+
+    def calc_p_chart(df, var='passorfail', window=50):
+        if df.empty or var not in df:
+            return None, None, None
+        df = df.tail(window)
+        p_bar = df[var].mean()
+        n = len(df)
+        sigma_p = np.sqrt(p_bar * (1 - p_bar) / n)
+        return p_bar, p_bar + 3*sigma_p, p_bar - 3*sigma_p
+
+
+    def plot_xr_chart_matplotlib(xbar, R, limits):
+        fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+        if xbar is None or R is None:
+            for ax in axes: ax.axis("off")
+            axes[0].text(0.5,0.5,"데이터 부족",ha="center",va="center")
+            return fig
+        UCLx,LCLx,UCLr,LCLr = limits
+        axes[0].plot(xbar.index,xbar.values,marker='o'); axes[0].axhline(xbar.mean(),c='g')
+        axes[0].axhline(UCLx,c='r',ls='--'); axes[0].axhline(LCLx,c='r',ls='--')
+        axes[0].set_title("X-bar 관리도"); axes[0].grid(True,ls='--',alpha=.5)
+        axes[1].plot(R.index,R.values,marker='o'); axes[1].axhline(R.mean(),c='g')
+        axes[1].axhline(UCLr,c='r',ls='--'); axes[1].axhline(LCLr,c='r',ls='--')
+        axes[1].set_title("R 관리도"); axes[1].grid(True,ls='--',alpha=.5)
+        plt.tight_layout(); return fig
+
+
+    def plot_p_chart_matplotlib(p_bar, UCL, LCL):
+        fig, ax = plt.subplots(figsize=(8,4))
+        if p_bar is None:
+            ax.axis("off"); ax.text(0.5,0.5,"데이터 부족",ha="center",va="center"); return fig
+        ax.hlines([p_bar,UCL,LCL],0,1,colors=['g','r','r'],linestyles=['-','--','--'])
+        ax.text(0.5,p_bar,f"불량률 {p_bar*100:.2f}%",ha='center',va='bottom',fontsize=12)
+        ax.set_ylim(0,max(1,UCL*1.2)); ax.set_title("P 관리도 (실시간 불량률)")
+        ax.grid(True,ls='--',alpha=.5); return fig
+
+
+# ============================================================
+# 🟢 TAB1. 현장 관리
+# ============================================================
+
+
+
+
+# ============================================================
+
+
+
+
+# ============================================================
+# 🟢 TAB2. 품질
+# ============================================================
+
+
+
+
+# ============================================================
+
+
+
+
+# ============================================================
+# 🟢 TAB3. 데이터 분석
+# ============================================================
+
+
+
+
+# ============================================================
+
 
 # ======== 앱 실행 ========
 app = App(app_ui, server, static_assets=app_dir / "www")
