@@ -773,155 +773,7 @@ def main_page(selected_tab: str):
 
         # 🧭 품질 모니터링 (예측 시뮬레이션 UI 포함)
         "quality": ui.navset_tab(
-            ui.nav_panel("예측",
-                # 입력 변수 카드
-                ui.div(
-                    ui.card(
-                        ui.card_header("입력 변수", style="background-color:#f8f9fa; text-align:center;"),
-                        # 생산 환경 정보 카드 (최상단)
-                        ui.card(
-                            ui.card_header("생산 환경 정보", style="text-align:center;"),
-                            ui.layout_columns(
-                                ui.div(
-                                    f"생산 라인: {df_raw['line'].iloc[0]}",
-                                    style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
-                                ),
-                                ui.div(
-                                    f"장비 이름: {df_raw['name'].iloc[0]}",
-                                    style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
-                                ),
-                                ui.div(
-                                    f"금형 이름: {df_raw['mold_name'].iloc[0]}",
-                                    style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
-                                ),
-                                col_widths=[4,4,4]
-                            )
-                        ),
 
-                        # === 공정 상태 관련 (4열) ===
-                        ui.card(
-                            ui.card_header("공정 상태 관련", style=""),
-                            ui.layout_columns(
-                                ui.input_numeric("count", "일조 누적 제품 개수", value=int(df_predict["count"].mean())),
-                                ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
-                                ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
-                                ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=int(df_predict["speed_ratio"].mean())),
-                                ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=int(df_predict["pressure_speed_ratio"].mean())),
-                                make_select("working", "장비 가동 여부"),
-                                make_select("emergency_stop", "비상 정지 여부"),
-                                make_select("tryshot_signal", "측정 딜레이 여부"),
-                                make_select("shift", "주, 야간 조"),
-                                col_widths=[3,3,3,3]
-                            )
-                        ),
-
-                        # === 용융 단계 (n행 4열) ===
-                        ui.card(
-                            ui.card_header("용융 단계", style=""),
-                            ui.layout_columns(
-                                make_num_slider("molten_temp"),
-                                make_select("heating_furnace", "용해로"),
-                                col_widths=[6,6]
-                            )
-                        ),
-
-                        # === 충진 단계 (n행 4열) ===
-                        ui.card(
-                            ui.card_header("충진 단계", style=""),
-                            ui.layout_columns(
-                                make_num_slider("sleeve_temperature"),
-                                make_num_slider("EMS_operation_time"),
-                                make_num_slider("low_section_speed"),
-                                make_num_slider("high_section_speed"),
-                                make_num_slider("molten_volume"),
-                                make_num_slider("cast_pressure"),
-                                ui.input_select("mold_code", "금형 코드", choices=sorted(df_predict["mold_code"].dropna().unique().astype(str))),
-                                col_widths=[3,3,3,3]
-                            )
-                        ),
-
-                        # === 냉각 단계 (n행 4열) ===
-                        ui.card(
-                            ui.card_header("냉각 단계", style=""),
-                            ui.layout_columns(
-                                make_num_slider("upper_mold_temp1"),
-                                make_num_slider("upper_mold_temp2"),
-                                make_num_slider("upper_mold_temp3"),
-                                make_num_slider("lower_mold_temp1"),
-                                make_num_slider("lower_mold_temp2"),
-                                make_num_slider("lower_mold_temp3"),
-                                make_num_slider("Coolant_temperature"),
-                                col_widths=[3,3,3,3]
-                            )
-                        ),
-
-                        # === 공정 속도 관련 (n행 4열) ===
-                        ui.card(
-                            ui.card_header("공정 속도 관련", style=""),
-                            ui.layout_columns(
-                                make_num_slider("facility_operation_cycleTime"),
-                                make_num_slider("production_cycletime"),
-                                col_widths=[6,6]
-                            )
-                        ),
-
-                        # === 품질 및 성능 (n행 4열) ===
-                        ui.card(
-                            ui.card_header("품질 및 성능", style=""),
-                            ui.layout_columns(
-                                make_num_slider("biscuit_thickness"),
-                                make_num_slider("physical_strength"),
-                                col_widths=[6,6]
-                            )
-                        )
-                    ),
-                    style="max-width: 1200px; margin: 0 auto;"
-                ),
-
-                ui.br(),
-
-                # 예측 실행 + 결과 카드 (sticky)
-                ui.div(
-                    ui.card(
-                        ui.card_header(
-                            ui.div(
-                                [
-                                    ui.input_action_button(
-                                        "predict_btn", "예측 실행",
-                                        class_="btn btn-primary btn-lg",
-                                        style="flex:1;"
-                                    ),
-                                    ui.input_action_button(
-                                        "reset_btn", ui.HTML('<i class="fa-solid fa-rotate-left"></i>'),
-                                        class_="btn btn-secondary btn-lg",
-                                        style="margin-left:10px; width:60px;"
-                                    )
-                                ],
-                                style="display:flex; align-items:center; width:100%;"
-                            ),
-                            style="background-color:#f8f9fa; text-align:center;" 
-                        ),
-                        ui.output_ui("prediction_result")
-                    ),
-                    style="""
-                        position: -webkit-sticky;
-                        position: sticky;
-                        bottom: 1px;
-                        z-index: 1000;
-                        max-width: 1200px;
-                        margin: 0 auto;
-                    """
-                ),
-
-            ),
-            ui.nav_panel("개선 방안",
-                ui.card(
-                    ui.card_header("불량 기여 요인 Top 5", style="text-align:center;"),
-                    ui.output_plot("local_factor_plot"),
-                    ui.hr(),
-                    ui.output_ui("local_factor_desc")   # ← 설명 칸 추가
-                )
-            ),
             ui.nav_panel(
                 "실시간 관리도",
                 ui.card(
@@ -945,6 +797,318 @@ def main_page(selected_tab: str):
                     )
                 )
             ),
+
+
+            # ui.nav_panel("예측",
+            #     # 입력 변수 카드
+            #     ui.div(
+            #         ui.card(
+            #             ui.card_header("입력 변수", style="background-color:#f8f9fa; text-align:center;"),
+            #             # 생산 환경 정보 카드 (최상단)
+            #             ui.card(
+            #                 ui.card_header("생산 환경 정보", style="text-align:center;"),
+            #                 ui.layout_columns(
+            #                     ui.div(
+            #                         f"생산 라인: {df_raw['line'].iloc[0]}",
+            #                         style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
+            #                     ),
+            #                     ui.div(
+            #                         f"장비 이름: {df_raw['name'].iloc[0]}",
+            #                         style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
+            #                     ),
+            #                     ui.div(
+            #                         f"금형 이름: {df_raw['mold_name'].iloc[0]}",
+            #                         style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
+            #                     ),
+            #                     col_widths=[4,4,4]
+            #                 )
+            #             ),
+
+            #             # === 공정 상태 관련 (4열) ===
+            #             ui.card(
+            #                 ui.card_header("공정 상태 관련", style=""),
+            #                 ui.layout_columns(
+            #                     ui.input_numeric("count", "일조 누적 제품 개수", value=int(df_predict["count"].mean())),
+            #                     ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
+            #                     ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
+            #                     ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=int(df_predict["speed_ratio"].mean())),
+            #                     ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=int(df_predict["pressure_speed_ratio"].mean())),
+            #                     make_select("working", "장비 가동 여부"),
+            #                     make_select("emergency_stop", "비상 정지 여부"),
+            #                     make_select("tryshot_signal", "측정 딜레이 여부"),
+            #                     make_select("shift", "주, 야간 조"),
+            #                     col_widths=[3,3,3,3]
+            #                 )
+            #             ),
+
+            #             # === 용융 단계 (n행 4열) ===
+            #             ui.card(
+            #                 ui.card_header("용융 단계", style=""),
+            #                 ui.layout_columns(
+            #                     make_num_slider("molten_temp"),
+            #                     make_select("heating_furnace", "용해로"),
+            #                     col_widths=[6,6]
+            #                 )
+            #             ),
+
+            #             # === 충진 단계 (n행 4열) ===
+            #             ui.card(
+            #                 ui.card_header("충진 단계", style=""),
+            #                 ui.layout_columns(
+            #                     make_num_slider("sleeve_temperature"),
+            #                     make_num_slider("EMS_operation_time"),
+            #                     make_num_slider("low_section_speed"),
+            #                     make_num_slider("high_section_speed"),
+            #                     make_num_slider("molten_volume"),
+            #                     make_num_slider("cast_pressure"),
+            #                     ui.input_select("mold_code", "금형 코드", choices=sorted(df_predict["mold_code"].dropna().unique().astype(str))),
+            #                     col_widths=[3,3,3,3]
+            #                 )
+            #             ),
+
+            #             # === 냉각 단계 (n행 4열) ===
+            #             ui.card(
+            #                 ui.card_header("냉각 단계", style=""),
+            #                 ui.layout_columns(
+            #                     make_num_slider("upper_mold_temp1"),
+            #                     make_num_slider("upper_mold_temp2"),
+            #                     make_num_slider("upper_mold_temp3"),
+            #                     make_num_slider("lower_mold_temp1"),
+            #                     make_num_slider("lower_mold_temp2"),
+            #                     make_num_slider("lower_mold_temp3"),
+            #                     make_num_slider("Coolant_temperature"),
+            #                     col_widths=[3,3,3,3]
+            #                 )
+            #             ),
+
+            #             # === 공정 속도 관련 (n행 4열) ===
+            #             ui.card(
+            #                 ui.card_header("공정 속도 관련", style=""),
+            #                 ui.layout_columns(
+            #                     make_num_slider("facility_operation_cycleTime"),
+            #                     make_num_slider("production_cycletime"),
+            #                     col_widths=[6,6]
+            #                 )
+            #             ),
+
+            #             # === 품질 및 성능 (n행 4열) ===
+            #             ui.card(
+            #                 ui.card_header("품질 및 성능", style=""),
+            #                 ui.layout_columns(
+            #                     make_num_slider("biscuit_thickness"),
+            #                     make_num_slider("physical_strength"),
+            #                     col_widths=[6,6]
+            #                 )
+            #             )
+            #         ),
+            #         style="max-width: 1200px; margin: 0 auto;"
+            #     ),
+
+            #     ui.br(),
+
+            #     # 예측 실행 + 결과 카드 (sticky)
+            #     ui.div(
+            #         ui.card(
+            #             ui.card_header(
+            #                 ui.div(
+            #                     [
+            #                         ui.input_action_button(
+            #                             "predict_btn", "예측 실행",
+            #                             class_="btn btn-primary btn-lg",
+            #                             style="flex:1;"
+            #                         ),
+            #                         ui.input_action_button(
+            #                             "reset_btn", ui.HTML('<i class="fa-solid fa-rotate-left"></i>'),
+            #                             class_="btn btn-secondary btn-lg",
+            #                             style="margin-left:10px; width:60px;"
+            #                         )
+            #                     ],
+            #                     style="display:flex; align-items:center; width:100%;"
+            #                 ),
+            #                 style="background-color:#f8f9fa; text-align:center;" 
+            #             ),
+            #             ui.output_ui("prediction_result")
+            #         ),
+            #         style="""
+            #             position: -webkit-sticky;
+            #             position: sticky;
+            #             bottom: 1px;
+            #             z-index: 1000;
+            #             max-width: 1200px;
+            #             margin: 0 auto;
+            #         """
+            #     ),
+
+            # ),
+            # ui.nav_panel("개선 방안",
+            #     ui.card(
+            #         ui.card_header("불량 기여 요인 Top 5", style="text-align:center;"),
+            #         ui.output_plot("local_factor_plot"),
+            #         ui.hr(),
+            #         ui.output_ui("local_factor_desc")   # ← 설명 칸 추가
+            #     )
+            # ),
+
+
+
+
+# =========================================
+# 기존 코드 최대한 유지 + 탭 통합 버전
+# =========================================
+ui.nav_panel("예측 및 개선",
+    # 입력 변수 카드
+    ui.div(
+        ui.card(
+            ui.card_header("입력 변수", style="background-color:#f8f9fa; text-align:center;"),
+
+            # 생산 환경 정보 카드 (최상단)
+            ui.card(
+                ui.card_header("생산 환경 정보", style="text-align:center;"),
+                ui.layout_columns(
+                    ui.div(
+                        f"생산 라인: {df_raw['line'].iloc[0]}",
+                        style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
+                    ),
+                    ui.div(
+                        f"장비 이름: {df_raw['name'].iloc[0]}",
+                        style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
+                    ),
+                    ui.div(
+                        f"금형 이름: {df_raw['mold_name'].iloc[0]}",
+                        style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
+                    ),
+                    col_widths=[4,4,4]
+                )
+            ),
+
+            # === 공정 상태 관련 ===
+            ui.card(
+                ui.card_header("공정 상태 관련"),
+                ui.layout_columns(
+                    ui.input_numeric("count", "일조 누적 제품 개수", value=int(df_predict["count"].mean())),
+                    ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
+                    ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
+                    ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=int(df_predict["speed_ratio"].mean())),
+                    ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=int(df_predict["pressure_speed_ratio"].mean())),
+                    make_select("working", "장비 가동 여부"),
+                    make_select("emergency_stop", "비상 정지 여부"),
+                    make_select("tryshot_signal", "측정 딜레이 여부"),
+                    make_select("shift", "주, 야간 조"),
+                    col_widths=[3,3,3,3]
+                )
+            ),
+
+            # === 용융 단계 ===
+            ui.card(
+                ui.card_header("용융 단계"),
+                ui.layout_columns(
+                    make_num_slider("molten_temp"),
+                    make_select("heating_furnace", "용해로"),
+                    col_widths=[6,6]
+                )
+            ),
+
+            # === 충진 단계 ===
+            ui.card(
+                ui.card_header("충진 단계"),
+                ui.layout_columns(
+                    make_num_slider("sleeve_temperature"),
+                    make_num_slider("EMS_operation_time"),
+                    make_num_slider("low_section_speed"),
+                    make_num_slider("high_section_speed"),
+                    make_num_slider("molten_volume"),
+                    make_num_slider("cast_pressure"),
+                    ui.input_select("mold_code", "금형 코드", choices=sorted(df_predict["mold_code"].dropna().unique().astype(str))),
+                    col_widths=[3,3,3,3]
+                )
+            ),
+
+            # === 냉각 단계 ===
+            ui.card(
+                ui.card_header("냉각 단계"),
+                ui.layout_columns(
+                    make_num_slider("upper_mold_temp1"),
+                    make_num_slider("upper_mold_temp2"),
+                    make_num_slider("upper_mold_temp3"),
+                    make_num_slider("lower_mold_temp1"),
+                    make_num_slider("lower_mold_temp2"),
+                    make_num_slider("lower_mold_temp3"),
+                    make_num_slider("Coolant_temperature"),
+                    col_widths=[3,3,3,3]
+                )
+            ),
+
+            # === 공정 속도 관련 ===
+            ui.card(
+                ui.card_header("공정 속도 관련"),
+                ui.layout_columns(
+                    make_num_slider("facility_operation_cycleTime"),
+                    make_num_slider("production_cycletime"),
+                    col_widths=[6,6]
+                )
+            ),
+
+            # === 품질 및 성능 ===
+            ui.card(
+                ui.card_header("품질 및 성능"),
+                ui.layout_columns(
+                    make_num_slider("biscuit_thickness"),
+                    make_num_slider("physical_strength"),
+                    col_widths=[6,6]
+                )
+            )
+        ),
+        style="max-width: 1200px; margin: 0 auto;"
+    ),
+
+    ui.br(),
+
+    # 예측 실행 + 결과 카드
+    ui.div(
+        ui.card(
+            ui.card_header(
+                ui.div(
+                    [
+                        ui.input_action_button(
+                            "predict_btn", "예측 실행",
+                            class_="btn btn-primary btn-lg",
+                            style="flex:1;"
+                        ),
+                        ui.input_action_button(
+                            "reset_btn", ui.HTML('<i class="fa-solid fa-rotate-left"></i>'),
+                            class_="btn btn-secondary btn-lg",
+                            style="margin-left:10px; width:60px;"
+                        )
+                    ],
+                    style="display:flex; align-items:center; width:100%;"
+                ),
+                style="background-color:#f8f9fa; text-align:center;"
+            ),
+            ui.output_ui("prediction_result")
+        ),
+        style="""
+            position: -webkit-sticky;
+            position: sticky;
+            bottom: 1px;
+            z-index: 1000;
+            max-width: 1200px;
+            margin: 0 auto;
+        """
+    ),
+
+    ui.br(),
+
+    # === 개선 방안 섹션 (조건부 렌더링 추가) ===
+    ui.output_ui("improvement_section")
+)
+
+
+
+
+
+
+
+
         ),
         "analysis": ui.h5("여기에 데이터 분석 결과를 표시합니다.")
     }
@@ -1580,6 +1744,42 @@ def server(input, output, session):
      finally:
         loading.set(False)
     
+    # @reactive.effect
+    # @reactive.event(input.apply_suggestions)
+    # def _():
+    #     factors = local_factors()
+    #     if factors is None or factors.empty:
+    #         return
+
+    #     top = factors.head(5).copy()
+    #     exclude_vars = ["count", "monthly_count", "global_count"]
+    #     use_num_cols = [c for c in num_cols if c not in exclude_vars]
+
+    #     baseline = df_predict[df_predict["passorfail"] == 0][use_num_cols].mean()
+    #     current = get_input_data().iloc[0][use_num_cols]
+
+    #     for _, row in top.iterrows():
+    #         feat = row["feature"]
+    #         col = [k for k, v in label_map.items() if v == feat]
+    #         if not col: 
+    #             continue
+    #         col = col[0]
+
+    #         if col in current.index:
+    #             diff = current[col] - baseline[col]
+    #             if abs(diff) > 1e-6:
+    #                 new_val = current[col] - diff/2   # 현재값과 baseline 사이 중간으로 이동
+    #                 update_slider(f"{col}_slider", value=float(new_val))
+    #                 update_numeric(col, value=float(new_val))
+    #                 print(f"[반영됨] {col}: {current[col]} → {new_val} (baseline {baseline[col]})")
+
+    #     # 🔹 자동 예측 실행
+    #     session.send_input_message("predict_btn", 1)
+
+
+    # ============================================================
+    # 개선 방안 반영 후 즉시 재예측 + 최종 판정 표시
+    # ============================================================
     @reactive.effect
     @reactive.event(input.apply_suggestions)
     def _():
@@ -1594,6 +1794,7 @@ def server(input, output, session):
         baseline = df_predict[df_predict["passorfail"] == 0][use_num_cols].mean()
         current = get_input_data().iloc[0][use_num_cols]
 
+        # === ① 개선값 반영 ===
         for _, row in top.iterrows():
             feat = row["feature"]
             col = [k for k, v in label_map.items() if v == feat]
@@ -1604,13 +1805,26 @@ def server(input, output, session):
             if col in current.index:
                 diff = current[col] - baseline[col]
                 if abs(diff) > 1e-6:
-                    new_val = current[col] - diff/2   # 현재값과 baseline 사이 중간으로 이동
+                    new_val = current[col] - diff / 2  # baseline 쪽으로 50% 이동
                     update_slider(f"{col}_slider", value=float(new_val))
                     update_numeric(col, value=float(new_val))
                     print(f"[반영됨] {col}: {current[col]} → {new_val} (baseline {baseline[col]})")
 
-        # 🔹 자동 예측 실행
-        session.send_input_message("predict_btn", 1)
+        # === ② 개선 후 자동 예측 ===
+        try:
+            X_new = get_input_data()
+            proba_new = model.predict_proba(X_new)[0, 1]
+            last_proba.set(proba_new)
+            prediction_done.set(True)  # 개선된 판정 결과 섹션 표시용
+
+            # === ③ 개선된 결과 저장용 상태값 추가 ===
+            session.send_custom_message("scroll_to_bottom", {})  # 하단 자동 스크롤
+
+        except Exception as e:
+            last_proba.set(f"error:{e}")
+
+
+
 
     @render.ui
     def prediction_result():
@@ -1880,6 +2094,76 @@ def server(input, output, session):
             )
         ]
     )
+
+
+
+
+
+
+
+# ================================================
+# 개선 방안 섹션 조건부 표시
+# ================================================
+
+    @output
+    @render.ui
+    def improvement_section():
+        # 예측 결과가 존재할 때만 개선 방안 섹션 렌더링
+        if not prediction_done.get():   # 예: prediction_done은 reactive.Value(True/False)
+            return None
+
+        return ui.card(
+            ui.card_header("불량 기여 요인 Top 5", style="text-align:center; background-color:#f8f9fa; font-weight:bold;"),
+            ui.output_plot("local_factor_plot"),
+            ui.hr(),
+            ui.output_ui("local_factor_desc")
+        )
+    prediction_done = reactive.Value(False)
+
+    @reactive.effect
+    @reactive.event(input.predict_btn)
+    def _():
+        # ... 기존 예측 로직 ...
+        prediction_done.set(True)
+
+    @reactive.effect
+    @reactive.event(input.reset_btn)
+    def _():
+        prediction_done.set(False)
+
+
+    # ================================================
+    # 개선 방안 섹션 조건부 표시 (양품이면 숨김)
+    # ================================================
+    @output
+    @render.ui
+    def improvement_section():
+        # 예측 결과가 존재하지 않으면 아무것도 표시하지 않음
+        if not prediction_done.get():
+            return None
+
+        proba = last_proba()
+        if proba is None:
+            return None
+
+        # ✅ 판정이 양품이면 Top5 숨기기
+        if proba < 0.2:  # 양품 기준: 20% 미만
+            return None
+
+        # 불량인 경우만 표시
+        return ui.card(
+            ui.card_header("불량 기여 요인 Top 5", style="text-align:center; background-color:#f8f9fa; font-weight:bold;"),
+            ui.output_plot("local_factor_plot"),
+            ui.hr(),
+            ui.output_ui("local_factor_desc")
+        )
+
+
+
+
+
+
+
 
 # 🟢 TAB2. 품질 끝
 # ============================================================
