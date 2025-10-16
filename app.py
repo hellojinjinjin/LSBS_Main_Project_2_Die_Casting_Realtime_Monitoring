@@ -567,6 +567,12 @@ def login_page():
                     "align-items:center; height:100vh; background-color:#f8f9fa;"
                 )
             },
+            # ▼ 로고 이미지
+            ui.img(
+                src="LS_Logo.svg",   # www 폴더 안에 LS_Logo.svg 위치해야 함
+                style="width:150px; margin-bottom:25px;"
+            ),
+            # ▼ 로그인 카드
             ui.card(
                 {
                     "style": (
