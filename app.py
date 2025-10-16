@@ -34,7 +34,7 @@ display_cols = [
 ]
 
 # 스트리밍 초기 설정
-streamer = reactive.Value(RealTimeStreamer(streaming_df[display_cols]))
+streamer = reactive.Value(RealTimeStreamer(streaming_df))
 current_data = reactive.Value(pd.DataFrame())
 is_streaming = reactive.Value(False)
 
