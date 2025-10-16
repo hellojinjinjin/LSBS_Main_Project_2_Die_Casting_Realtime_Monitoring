@@ -713,6 +713,29 @@ def field_dashboard_ui():
         ),
     )
 
+def floating_stream_bar():
+    """헤더 바로 아래 탭 스타일 스트리밍 제어 바"""
+    return ui.div(
+        {
+            "style": (
+                "display:flex; align-items:center; gap:16px;"
+                "background-color:#fef6ee; border:1px solid #e0c8a0;"
+                "border-bottom:none; border-radius:8px 8px 0 0;"
+                "padding:8px 16px; position:absolute; top:60px; right:40px;"
+                "z-index:1500; font-weight:bold; color:#5c4b3b;"
+            )
+        },
+        # 좌측: 제목
+        ui.div("스트리밍 제어", style="font-weight:bold; font-size:15px;"),
+        # 상태 표시
+        ui.output_ui("stream_status"),
+        # 버튼 그룹
+        ui.div(
+            {"style": "display:flex; gap:8px;"},
+            ui.output_ui("stream_buttons")
+        ),
+    )
+
 def load_svg_inline():
     svg_path = os.path.join(APP_DIR, "www", "diagram.svg")
     with open(svg_path, "r", encoding="utf-8") as f:
@@ -1060,7 +1083,14 @@ def main_page(selected_tab: str):
         ui.div(tab_contents.get(selected_tab, ui.p("페이지 없음"))),
     )
 
-    return ui.page_fluid(header_bar, content_area)
+    return ui.page_fluid(
+        header_bar,
+        ui.div(
+            {"style": "position:relative;"},
+            floating_stream_bar(),  # ✅ 새로운 탭 형태 바 적용
+            content_area
+        )
+    )
 
 # ======== 전체 UI ========
 app_ui = ui.page_fluid(global_head, ui.output_ui("main_ui"))
@@ -1343,7 +1373,7 @@ def server(input, output, session):
     @output
     @render.ui
     def stream_status():
-        return ui.div("🟢 스트리밍 중" if is_streaming() else "🔴 정지됨")
+        return ui.div("🟢 " if is_streaming() else "🔴 ")
 
     @output
     @render.plot
@@ -1420,7 +1450,49 @@ def server(input, output, session):
 
         return df.reset_index(drop=True)
 
-    # 버튼 동작
+    # ---------- 버튼 렌더링 ----------
+    @output
+    @render.ui
+    def stream_buttons():
+        """스트리밍 상태에 따라 버튼 표시 전환 (아이콘만, 따뜻한 톤으로 통일)"""
+        btn_base = (
+            "width:36px; height:36px; display:flex; align-items:center; justify-content:center;"
+            "border:none; border-radius:6px; font-size:16px; color:white;"
+            "box-shadow:0 2px 4px rgba(0,0,0,0.15);"
+        )
+
+        if is_streaming():
+            # ▶ 스트리밍 중 → 일시정지 + 리셋
+            return ui.div(
+                {"style": "display:flex; gap:8px;"},
+                ui.input_action_button(
+                    "pause_stream",
+                    ui.HTML('<i class="fa-solid fa-pause"></i>'),
+                    style=btn_base + "background-color:#fbbf24;",  # 밝은 주황
+                ),
+                ui.input_action_button(
+                    "reset_stream",
+                    ui.HTML('<i class="fa-solid fa-rotate-right"></i>'),
+                    style=btn_base + "background-color:#d97706;",  # 연갈색
+                ),
+            )
+        else:
+            # ⏹ 정지 상태 → 시작 + 리셋
+            return ui.div(
+                {"style": "display:flex; gap:8px;"},
+                ui.input_action_button(
+                    "start_stream",
+                    ui.HTML('<i class="fa-solid fa-play"></i>'),
+                    style=btn_base + "background-color:#f59e0b;",  # 살구빛 오렌지
+                ),
+                ui.input_action_button(
+                    "reset_stream",
+                    ui.HTML('<i class="fa-solid fa-rotate-right"></i>'),
+                    style=btn_base + "background-color:#d97706;",  # 연갈색
+                ),
+            )
+
+    # ---------- 버튼 동작 ----------
     @reactive.effect
     @reactive.event(input.start_stream)
     def _start_stream():
@@ -1437,7 +1509,6 @@ def server(input, output, session):
         streamer().reset_stream()
         current_data.set(pd.DataFrame())
         is_streaming.set(False)
-
         reset_values = {col: 0.0 for col in display_cols}
         await session.send_custom_message("updateSensors", reset_values)
 
