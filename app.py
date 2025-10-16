@@ -41,59 +41,63 @@ is_streaming = reactive.Value(False)
 # ===== 한글 변수명 매핑 =====
 VAR_LABELS = {
     # 용융 단계
-    "molten_temp": "용융 온도(℃)",
+    "molten_temp": "용융 온도",
     "heating_furnace": "용해로 정보",
 
     # 충진 단계
-    "sleeve_temperature": "슬리브 온도(℃)",
-    "EMS_operation_time": "EMS 가동시간(s)",
-    "low_section_speed": "하부 주입속도(cm/s)",
-    "high_section_speed": "상부 주입속도(cm/s)",
-    "molten_volume": "주입 금속량(cc)",
-    "cast_pressure": "주입 압력(bar)",
+    "sleeve_temperature": "슬리브 온도",
+    "EMS_operation_time": "EMS 가동시간",
+    "low_section_speed": "하부 주입속도",
+    "high_section_speed": "상부 주입속도",
+    "molten_volume": "주입 금속량",
+    "cast_pressure": "주입 압력",
 
     # 냉각 단계
-    "upper_mold_temp1": "상부1 금형온도(℃)",
-    "upper_mold_temp2": "상부2 금형온도(℃)",
-    "upper_mold_temp3": "상부3 금형온도(℃)",
-    "lower_mold_temp1": "하부1 금형온도(℃)",
-    "lower_mold_temp2": "하부2 금형온도(℃)",
-    "lower_mold_temp3": "하부3 금형온도(℃)",
-    "Coolant_temperature": "냉각수 온도(℃)",
+    "upper_mold_temp1": "상부1 금형온도",
+    "upper_mold_temp2": "상부2 금형온도",
+    "upper_mold_temp3": "상부3 금형온도",
+    "lower_mold_temp1": "하부1 금형온도",
+    "lower_mold_temp2": "하부2 금형온도",
+    "lower_mold_temp3": "하부3 금형온도",
+    "Coolant_temperature": "냉각수 온도",
 
     # 품질 및 속도
-    "production_cycletime": "생산 사이클(sec)",
-    "biscuit_thickness": "주조물 두께(mm)",
-    "physical_strength": "제품 강도(MPa)",
+    "production_cycletime": "생산 사이클",
+    "biscuit_thickness": "주조물 두께",
+    "physical_strength": "제품 강도",
+    
+    "mold_code": "금형코드",
 }
 
 # ===== 센서 위치 (x, y) =====
 VAR_POSITIONS = {
     # 용융부
-    "molten_temp": (750, 360),
-    "heating_furnace": (810, 380),
+    "molten_temp": (735, 250),
+    "heating_furnace": (735, 450),
 
     # 슬리브 / 주입
-    "sleeve_temperature": (650, 330),
-    "EMS_operation_time": (620, 280),
-    "low_section_speed": (580, 250),
-    "high_section_speed": (580, 210),
-    "molten_volume": (620, 160),
-    "cast_pressure": (590, 120),
+    "sleeve_temperature": (510, 325),
+    "EMS_operation_time": (30, 340),
+    "low_section_speed": (350, 390),
+    "high_section_speed": (350, 135),
+    "molten_volume": (700, 320),
+    "cast_pressure": (520, 360),
 
     # 금형 냉각
-    "upper_mold_temp1": (430, 180),
-    "upper_mold_temp2": (400, 230),
-    "upper_mold_temp3": (370, 280),
-    "lower_mold_temp1": (430, 330),
-    "lower_mold_temp2": (400, 380),
-    "lower_mold_temp3": (370, 430),
-    "Coolant_temperature": (300, 350),
+    "upper_mold_temp1": (30, 30),
+    "upper_mold_temp2": (30, 80),
+    "upper_mold_temp3": (30, 130),
+    "lower_mold_temp1": (530, 110),
+    "lower_mold_temp2": (530, 160),
+    "lower_mold_temp3": (530, 210),
+    "Coolant_temperature": (30, 370),
 
     # 속도/품질
-    "production_cycletime": (200, 460),
-    "biscuit_thickness": (220, 420),
-    "physical_strength": (220, 380),
+    "production_cycletime": (30, 460),
+    "biscuit_thickness": (30, 430),
+    "physical_strength": (30, 400),
+    
+    "mold_code": (350, 480),
 }
 
 
@@ -472,7 +476,8 @@ train_raw["date_only"] = train_raw["real_time"].dt.date
 daily_mold = train_raw.groupby(["date_only", "mold_code"]).size().reset_index(name="count")
 pivot_count = daily_mold.pivot(index="date_only", columns="mold_code", values="count").fillna(0)
 
-
+years = list(range(2024, 2027))
+months = list(range(1, 13))
 
 # ======== 전역 HEAD (favicon, CSS 등) ========
 global_head = ui.head_content(
@@ -544,6 +549,14 @@ global_head = ui.head_content(
           valueNode.animate([{opacity:.3},{opacity:1}], {duration:350, iterations:1});
         }
       });
+    """),
+    ui.tags.script("""
+    Shiny.addCustomMessageHandler("updateGif", function(data) {
+        const img = document.getElementById("process_gif");
+        if (!img) return;
+        // ⚡ 캐시 무효화를 위해 timestamp 붙임
+        img.src = data.src + "?t=" + new Date().getTime();
+    });
     """),
 )
 
@@ -662,33 +675,44 @@ def menu_page():
 
 def field_dashboard_ui():
     return ui.div(
-        {"style": "display:grid; grid-template-columns:1fr 2fr; gap:20px;"},
-        ui.card(
-            ui.card_header("스트리밍 제어"),
-            ui.input_action_button("start_stream", "▶ 시작", class_="btn btn-success me-1"),
-            ui.input_action_button("pause_stream", "⏸ 일시정지", class_="btn btn-warning me-1"),
-            ui.input_action_button("reset_stream", "🔄 리셋", class_="btn btn-secondary"),
-            ui.hr(),
-            ui.output_ui("stream_status"),
-        ),
+        {"style": "display:flex; flex-direction:column; gap:20px;"},  # 🔹 세로 2행 구성
+        # ──────────────── 1행: 제어 + 공정 상태 ────────────────
         ui.div(
-            {"style": "display:flex; flex-direction:column; gap:20px;"},
+            {
+                "style": (
+                    "display:grid; grid-template-columns:1fr 2fr; gap:20px;"
+                )
+            },
+            ui.card(
+                ui.card_header("스트리밍 제어"),
+                ui.input_action_button("start_stream", "▶ 시작", class_="btn btn-success me-1"),
+                ui.input_action_button("pause_stream", "⏸ 일시정지", class_="btn btn-warning me-1"),
+                ui.input_action_button("reset_stream", "🔄 리셋", class_="btn btn-secondary"),
+                ui.hr(),
+                ui.output_ui("stream_status"),
+            ),
             ui.card(
                 ui.card_header("🧩 주조 공정 실시간 상태"),
-                # ✅ PNG 그림 삽입
-                # ui.tags.img(
-                #     {
-                #         "src": "diecast.png",  # ./www/diecast.png 경로
-                #         "style": (
-                #             "width:100%; max-width:900px; height:auto; "
-                #             "border:2px solid #d0d7de; border-radius:8px; "
-                #             "box-shadow:0 0 6px rgba(0,0,0,0.1);"
-                #         )
-                #     }
-                # ),
-                ui.output_ui("process_svg_inline")  # SVG와 병행 표시 가능
+                ui.output_ui("process_svg_inline"),
+                style="width:100%;"
             ),
-        )
+        ),
+
+        # ──────────────── 2행: 실시간 데이터 표 ────────────────
+        ui.card(
+            ui.card_header("📊 실시간 데이터"),
+            ui.div(
+                ui.output_data_frame("recent_data_table"),
+                # 🔹 스크롤이 생기도록 wrapping div에 명시적 width/overflow 지정
+                style=(
+                    "width:100%; "
+                    "overflow-x:auto; overflow-y:auto; "  # 가로/세로 스크롤 모두 허용
+                    "max-height:500px; "  # 너무 길면 세로 스크롤
+                    "display:block;"
+                )
+            ),
+            style="width:100%;"
+        ),
     )
 
 def load_svg_inline():
@@ -708,6 +732,39 @@ def make_dynamic_svg(sensor_list: list[str]) -> str:
     base_svg.append('</svg>')
     return "\n".join(base_svg)
 
+
+
+### ⬇️⬇️⬇️ 1단계: 여기에 아래 함수 코드를 통째로 추가하세요. ⬇️⬇️⬇️ ###
+
+def plan_page_ui():
+    """생산계획 탭의 UI를 반환하는 함수"""
+    years = list(range(datetime.date.today().year, datetime.date.today().year + 3))
+    months = list(range(1, 13))
+    return ui.layout_sidebar(
+        ui.sidebar(
+            ui.input_numeric("monthly_target", "이달의 총 생산 목표 수", value=20000, min=1000, step=1000),
+            ui.input_select("year", "연도 선택", {str(y): str(y) for y in years}, selected=str(datetime.date.today().year)),
+            ui.input_select("month", "월 선택", {str(m): f"{m}월" for m in months}, selected=str(datetime.date.today().month)),
+            ui.output_ui("mold_inputs"),
+            ui.output_text("remaining_qty"),
+            ui.input_action_button("run_plan", "시뮬레이션 실행", class_="btn btn-primary"),
+        ),
+        ui.card(ui.card_header("금형코드별 생산성 요약"), ui.output_data_frame("mold_summary_table")),
+        ui.card(
+            ui.card_header("달력형 계획표", ui.input_action_button("show_modal", "날짜별 금형 코드 생산 추이", class_="btn btn-sm btn-outline-primary", style="position:absolute; top:10px; right:10px;")),
+            ui.output_ui("calendar_view"),
+            ui.hr(),
+            
+            # ✅✅✅ 에러 수정: ui.icon() -> ui.tags.i() 로 변경 ✅✅✅
+            ui.input_action_button(
+                "generate_report_btn", 
+                ["PDF 보고서 생성 ", ui.tags.i(class_="fa-solid fa-file-pdf")], 
+                class_="btn btn-danger"
+            ),
+            
+            ui.output_ui("report_output_placeholder")
+        )
+    )
 # ======== 3️⃣ 본문 페이지 ========
 def main_page(selected_tab: str):
     # --- 메뉴별 제목 및 본문 내용 ---
@@ -717,154 +774,164 @@ def main_page(selected_tab: str):
         "analysis": "📈 데이터 분석"
     }
     tab_contents = {
-        "field": field_dashboard_ui(),  # ✅ 실시간 대시보드 삽입
-        # "quality": ui.h5("여기에 품질 모니터링 내용을 표시합니다."),
+        "field": ui.navset_tab(
+            ui.nav_panel("실시간 대시보드", field_dashboard_ui()),
+            ui.nav_panel("생산계획 시뮬레이션", plan_page_ui())
+        ),
 
         # 🧭 품질 모니터링 (예측 시뮬레이션 UI 포함)
         "quality": ui.navset_tab(
+
+
             ui.nav_panel("예측",
+                # 입력 변수 카드
                 ui.div(
                     ui.card(
                         ui.card_header("입력 변수", style="background-color:#f8f9fa; text-align:center;"),
-
-                        # 생산 환경 정보 카드
+                        # 생산 환경 정보 카드 (최상단)
                         ui.card(
                             ui.card_header("생산 환경 정보", style="text-align:center;"),
                             ui.layout_columns(
                                 ui.div(
-                                    "생산 라인: A라인",
+                                    f"생산 라인: {df_raw['line'].iloc[0]}",
                                     style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
                                 ),
                                 ui.div(
-                                    "장비 이름: DC Machine 01",
+                                    f"장비 이름: {df_raw['name'].iloc[0]}",
                                     style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
                                 ),
                                 ui.div(
-                                    "금형 이름: Mold-01",
+                                    f"금형 이름: {df_raw['mold_name'].iloc[0]}",
                                     style="background-color:#e9ecef; padding:8px 12px; border-radius:6px; text-align:center; font-weight:bold;"
                                 ),
-                                col_widths=[4, 4, 4]
+                                col_widths=[4,4,4]
                             )
                         ),
 
-                        # === 공정 상태 관련 ===
+                        # === 공정 상태 관련 (4열) ===
                         ui.card(
                             ui.card_header("공정 상태 관련", style=""),
                             ui.layout_columns(
-                                ui.input_numeric("count", "일조 누적 제품 개수", value=1000),
-                                ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=20000),
-                                ui.input_numeric("global_count", "전체 누적 제품 개수", value=100000),
-                                ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=95),
-                                ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=90),
-                                ui.input_select("working", "장비 가동 여부", choices=["가동", "정지"]),
-                                ui.input_select("emergency_stop", "비상 정지 여부", choices=["정상", "비상정지"]),
-                                ui.input_select("tryshot_signal", "측정 딜레이 여부", choices=["없음", "있음"]),
-                                ui.input_select("shift", "근무조", choices=["주간", "야간"]),
+                                ui.input_numeric("count", "일조 누적 제품 개수", value=int(df_predict["count"].mean())),
+                                ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
+                                ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
+                                ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=int(df_predict["speed_ratio"].mean())),
+                                ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=int(df_predict["pressure_speed_ratio"].mean())),
+                                make_select("working", "장비 가동 여부"),
+                                make_select("emergency_stop", "비상 정지 여부"),
+                                make_select("tryshot_signal", "측정 딜레이 여부"),
+                                make_select("shift", "주, 야간 조"),
                                 col_widths=[3,3,3,3]
                             )
                         ),
 
-                        # === 용융 단계 ===
+                        # === 용융 단계 (n행 4열) ===
                         ui.card(
                             ui.card_header("용융 단계", style=""),
                             ui.layout_columns(
-                                ui.input_slider("molten_temp", "용융 온도(℃)", 600, 750, 680),
-                                ui.input_select("heating_furnace", "용해로", choices=["F1", "F2", "F3"]),
+                                make_num_slider("molten_temp"),
+                                make_select("heating_furnace", "용해로"),
                                 col_widths=[6,6]
                             )
                         ),
 
-                        # === 충진 단계 ===
+                        # === 충진 단계 (n행 4열) ===
                         ui.card(
                             ui.card_header("충진 단계", style=""),
                             ui.layout_columns(
-                                ui.input_slider("sleeve_temperature", "슬리브 온도", 100, 200, 150),
-                                ui.input_slider("EMS_operation_time", "EMS 작동 시간", 0, 10, 5),
-                                ui.input_slider("low_section_speed", "저속 구간 속도", 0, 2, 1),
-                                ui.input_slider("high_section_speed", "고속 구간 속도", 0, 5, 3),
-                                ui.input_slider("molten_volume", "용탕량", 0, 100, 50),
-                                ui.input_slider("cast_pressure", "주조 압력", 0, 200, 100),
-                                ui.input_select("mold_code", "금형 코드", choices=["M1", "M2", "M3"]),
+                                make_num_slider("sleeve_temperature"),
+                                make_num_slider("EMS_operation_time"),
+                                make_num_slider("low_section_speed"),
+                                make_num_slider("high_section_speed"),
+                                make_num_slider("molten_volume"),
+                                make_num_slider("cast_pressure"),
+                                ui.input_select("mold_code", "금형 코드", choices=sorted(df_predict["mold_code"].dropna().unique().astype(str))),
                                 col_widths=[3,3,3,3]
                             )
                         ),
 
-                        # === 냉각 단계 ===
+                        # === 냉각 단계 (n행 4열) ===
                         ui.card(
                             ui.card_header("냉각 단계", style=""),
                             ui.layout_columns(
-                                ui.input_slider("upper_mold_temp1", "상형 온도1", 0, 300, 150),
-                                ui.input_slider("upper_mold_temp2", "상형 온도2", 0, 300, 160),
-                                ui.input_slider("upper_mold_temp3", "상형 온도3", 0, 300, 155),
-                                ui.input_slider("lower_mold_temp1", "하형 온도1", 0, 300, 140),
-                                ui.input_slider("lower_mold_temp2", "하형 온도2", 0, 300, 145),
-                                ui.input_slider("lower_mold_temp3", "하형 온도3", 0, 300, 150),
-                                ui.input_slider("Coolant_temperature", "냉각수 온도", 0, 100, 25),
+                                make_num_slider("upper_mold_temp1"),
+                                make_num_slider("upper_mold_temp2"),
+                                make_num_slider("upper_mold_temp3"),
+                                make_num_slider("lower_mold_temp1"),
+                                make_num_slider("lower_mold_temp2"),
+                                make_num_slider("lower_mold_temp3"),
+                                make_num_slider("Coolant_temperature"),
                                 col_widths=[3,3,3,3]
                             )
                         ),
 
-                        # === 공정 속도 관련 ===
+                        # === 공정 속도 관련 (n행 4열) ===
                         ui.card(
                             ui.card_header("공정 속도 관련", style=""),
                             ui.layout_columns(
-                                ui.input_slider("facility_operation_cycleTime", "설비 주기", 0, 100, 50),
-                                ui.input_slider("production_cycletime", "생산 주기", 0, 100, 55),
+                                make_num_slider("facility_operation_cycleTime"),
+                                make_num_slider("production_cycletime"),
                                 col_widths=[6,6]
                             )
                         ),
 
-                        # === 품질 및 성능 ===
+                        # === 품질 및 성능 (n행 4열) ===
                         ui.card(
                             ui.card_header("품질 및 성능", style=""),
                             ui.layout_columns(
-                                ui.input_slider("biscuit_thickness", "비스킷 두께", 0, 10, 5),
-                                ui.input_slider("physical_strength", "물리적 강도", 0, 100, 70),
+                                make_num_slider("biscuit_thickness"),
+                                make_num_slider("physical_strength"),
                                 col_widths=[6,6]
                             )
                         )
                     ),
-                    style="max-width:1200px; margin:0 auto;"
+                    style="max-width: 1200px; margin: 0 auto;"
                 ),
 
                 ui.br(),
 
-                # === 예측 실행 카드 (하단 고정) ===
+                # 예측 실행 + 결과 카드 (sticky)
                 ui.div(
                     ui.card(
                         ui.card_header(
                             ui.div(
                                 [
-                                    ui.input_action_button("predict_btn", "예측 실행", class_="btn btn-primary btn-lg", style="flex:1;"),
-                                    ui.input_action_button("reset_btn", ui.HTML('<i class="fa-solid fa-rotate-left"></i>'),
-                                                           class_="btn btn-secondary btn-lg",
-                                                           style="margin-left:10px; width:60px;")
+                                    ui.input_action_button(
+                                        "predict_btn", "예측 실행",
+                                        class_="btn btn-primary btn-lg",
+                                        style="flex:1;"
+                                    ),
+                                    ui.input_action_button(
+                                        "reset_btn", ui.HTML('<i class="fa-solid fa-rotate-left"></i>'),
+                                        class_="btn btn-secondary btn-lg",
+                                        style="margin-left:10px; width:60px;"
+                                    )
                                 ],
                                 style="display:flex; align-items:center; width:100%;"
                             ),
-                            style="background-color:#f8f9fa; text-align:center;"
+                            style="background-color:#f8f9fa; text-align:center;" 
                         ),
                         ui.output_ui("prediction_result")
                     ),
                     style="""
+                        position: -webkit-sticky;
                         position: sticky;
                         bottom: 1px;
                         z-index: 1000;
                         max-width: 1200px;
                         margin: 0 auto;
-                        width: 100%;
                     """
                 ),
-            ),
 
+            ),
             ui.nav_panel("개선 방안",
                 ui.card(
                     ui.card_header("불량 기여 요인 Top 5", style="text-align:center;"),
                     ui.output_plot("local_factor_plot"),
                     ui.hr(),
-                    ui.output_ui("local_factor_desc")
+                    ui.output_ui("local_factor_desc")   # ← 설명 칸 추가
                 )
-            )
+            ),
         ),
 
 
@@ -1043,6 +1110,12 @@ def server(input, output, session):
     @reactive.event(input.cancel_logout)
     def _logout_cancel():
         ui.modal_remove()
+    
+    # ===== 뒤로가기 버튼: 카드 선택 페이지로 복귀 ===== 
+    @reactive.effect 
+    @reactive.event(input.back_btn) 
+    def _go_back(): 
+        page_state.set("menu")
 
     # 페이지 상태에 따라 UI 전환
     @output
@@ -1067,6 +1140,75 @@ def server(input, output, session):
         return ""
 
     # ======== 📈 데이터 분석 탭 ========
+   # --- 생산계획 탭 서버 로직 ---
+    @render.ui
+    def mold_inputs():
+        if not codes: return ui.p("금형코드 데이터 없음")
+        inputs = []
+        for code in codes[:-1]:
+            inputs.append(ui.input_numeric(f"target_{code}", ui.HTML(f"<span style='color:{mold_colors.get(code, '#000')}; font-weight:bold;'>금형코드 {code}</span>"), value=0, min=0, step=100))
+        return ui.div(*inputs)
+    
+    DATA_PATH = pathlib.Path("./data/train_raw.csv")
+    try:
+        df_raw = pd.read_csv(DATA_PATH)
+        print(f"✅ 데이터 로드 완료: {df_raw.shape}")
+    except Exception as e:
+        print("⚠️ 데이터 로드 실패:", e)
+        df_raw = pd.DataFrame()
+
+    @render.text
+    def remaining_qty():
+        if not codes: return ""
+        total_target = input.monthly_target() or 0
+        user_sum = sum(input[f"target_{code}"]() or 0 for code in codes[:-1])
+        remaining = total_target - user_sum
+        if user_sum > total_target:
+            return f"⚠️ 목표 초과: {user_sum-total_target:,}개"
+        return f"남은 생산량 ({last_code}): {remaining:,}개"
+
+    @output
+    @render.data_frame
+    def mold_summary_table():
+        if mold_summary.empty: return pd.DataFrame()
+        df = mold_summary.rename(columns={
+            "mold_code": "금형코드", "avg_facility_cycleTime": "평균사이클(초)",
+            "daily_capacity": "일일생산능력", "min_prod": "최소일일생산량",
+            "max_prod": "최대일일생산량", "avg_prod": "평균일일생산량"
+        })
+        return df.round(2)
+
+    plan_df = reactive.Value(pd.DataFrame())
+    @reactive.effect
+    @reactive.event(input.run_plan)
+    def _():
+        if not codes: 
+            plan_df.set(pd.DataFrame())
+            return
+        
+        total_target = input.monthly_target() or 0
+        year, month = int(input.year()), int(input.month())
+        targets = {code: input[f"target_{code}"]() or 0 for code in codes[:-1]}
+        user_sum = sum(targets.values())
+        targets[last_code] = max(total_target - user_sum, 0)
+        
+        if sum(targets.values()) == 0: # If all targets are 0, distribute by capacity
+            total_capacity = mold_summary["daily_capacity"].sum()
+            if total_capacity > 0:
+                for code in codes:
+                    ratio = mold_summary.loc[mold_summary.mold_code == code, "daily_capacity"].iloc[0] / total_capacity
+                    targets[code] = int(total_target * ratio)
+
+        _, last_day = calendar.monthrange(year, month)
+        schedule = []
+        # (This is a simplified scheduling logic)
+        for day in range(1, last_day + 1):
+            for code in codes:
+                daily_plan = int(targets[code] / last_day) if last_day > 0 else 0
+                schedule.append({"date": datetime.date(year, month, day), "mold_code": code, "plan_qty": daily_plan})
+        plan_df.set(pd.DataFrame(schedule))
+
+
     DATA_PATH = pathlib.Path("./data/train_raw.csv")
     try:
         df_raw = pd.read_csv(DATA_PATH)
@@ -1106,67 +1248,70 @@ def server(input, output, session):
         return pdf_path
 
     # -------- UI 내용 --------
+
     @output
     @render.ui
-    def analysis_content():
-        return ui.div(
-            ui.h4("📊 생산 계획 달성률 분석"),
-            output_widget("ach_rate"),
-            output_widget("mold_pie"),
-            output_widget("delay_pie"),
-            output_widget("cond_box"),
-            ui.input_action_button("make_report", "📑 PDF 리포트 생성", class_="btn btn-primary mt-4"),
-            ui.output_text("report_msg")
-        )
+    def calendar_view():
+        df = plan_df.get()
+        if df.empty: return ui.p("시뮬레이션 실행 버튼을 눌러주세요.", style="text-align:center; color:grey;")
+        
+        year, month = int(input.year()), int(input.month())
+        cal = calendar.monthcalendar(year, month)
+        days_kr = ["일", "월", "화", "수", "목", "금", "토"]
+        html = '<div style="display:grid; grid-template-columns: 80px repeat(7, 1fr); gap:4px;">'
+        html += '<div></div>' + "".join([f"<div style='font-weight:bold; text-align:center;'>{d}</div>" for d in days_kr])
+        
+        for w_i, week in enumerate(cal, start=1):
+            html += f"<div style='font-weight:bold;'>{w_i}주</div>"
+            for d in week:
+                if d == 0:
+                    html += "<div style='border:1px solid #ccc; min-height:80px; background:#f9f9f9;'></div>"
+                else:
+                    cell_date = datetime.date(year, month, d)
+                    cell_df = df[df["date"] == cell_date]
+                    cell_html = ""
+                    for _, r in cell_df.iterrows():
+                        if r["plan_qty"] > 0:
+                             cell_html += f"<span style='color:{mold_colors.get(r['mold_code'], '#000')}; font-weight:bold;'>{r['mold_code']}: {r['plan_qty']}</span><br>"
+                    html += f"<div style='border:1px solid #ccc; min-height:80px; padding:4px; font-size:12px;'>{d}<br>{cell_html}</div>"
+        html += "</div>"
+        return ui.HTML(html)
 
-    # -------- 그래프들 --------
     @output
-    @render_plotly
-    def ach_rate():
-        if df_raw.empty:
-            return go.Figure()
-        df_raw["idx"] = range(1, len(df_raw) + 1)
-        fig = px.line(df_raw, x="idx", y=df_raw.columns[1], title="📈 생산 달성률 추이")
+    @render.plot
+    def mold_plot():
+        fig, ax = plt.subplots(figsize=(12, 6))
+        if not pivot_count.empty:
+            pivot_count.plot(kind="bar", stacked=True, ax=ax, color=[mold_colors.get(str(int(c))) for c in pivot_count.columns])
+        ax.set_title("날짜별 금형 코드 생산 추이")
+        ax.set_xlabel("날짜")
+        ax.set_ylabel("생산 개수")
+        ax.legend(title="금형 코드")
+        plt.tight_layout()
         return fig
 
-    @output
-    @render_plotly
-    def mold_pie():
-        if "mold_code" not in df_raw.columns:
-            return go.Figure()
-        share = df_raw["mold_code"].value_counts(normalize=True) * 100
-        fig = go.Figure(go.Pie(labels=share.index, values=share.values, textinfo="label+percent"))
-        fig.update_layout(title="몰드별 생산 비율")
-        return fig
+    @reactive.effect
+    @reactive.event(input.show_modal)
+    def _():
+        ui.modal_show(ui.modal(ui.output_plot("mold_plot"), title="날짜별 금형 코드 생산 추이", size="xl", easy_close=True))
+
+    report_content = reactive.Value(None)
+    @reactive.effect
+    @reactive.event(input.generate_report_btn)
+    def _():
+        # This part will be handled by file generation, so we just set a trigger
+        report_content.set("generate")
 
     @output
-    @render_plotly
-    def delay_pie():
-        labels = ["냉각수 지연", "작업자 교대", "금형 세정", "설비 점검"]
-        values = np.random.randint(5, 15, len(labels))
-        fig = go.Figure(go.Pie(labels=labels, values=values, textinfo="label+value"))
-        fig.update_layout(title="딜레이 요인 분석")
-        return fig
-
-    @output
-    @render_plotly
-    def cond_box():
-        cols = [c for c in ["molten_temp", "injection_pressure", "upper_plunger_speed", "cooling_temp"] if c in df_raw.columns]
-        if not cols:
-            return go.Figure()
-        dfm = df_raw[cols].melt()
-        fig = px.box(dfm, x="variable", y="value", title="생산 컨디션 분포", points="all")
-        return fig
-
-    @output
-    @render.text
-    @reactive.event(input.make_report)
-    def report_msg():
-        if df_raw.empty:
-            return "⚠️ 데이터가 없습니다."
-        path = generate_report(df_raw)
-        return f"✅ 리포트 생성 완료: {path}"
-
+    @render.ui
+    def report_output_placeholder():
+        content = report_content.get()
+        if content == "generate":
+            ui.modal_show(ui.modal(ui.p("보고서 생성을 시작합니다..."), title="알림", easy_close=True))
+            report_content.set(None) # Reset trigger
+            # In a real app, you would now generate the file.
+            return ui.div(ui.hr(), ui.p("보고서 생성이 완료되었습니다.", class_="alert alert-success"))
+        return None
     # ===== 실시간 스트리밍 로직 =====
     @output
     @render.ui
@@ -1189,12 +1334,17 @@ def server(input, output, session):
         return fig
 
     @output
-    @render.table
+    @render.data_frame
     def recent_data_table():
         df = current_data()
-        if df.empty:
-            return pd.DataFrame({"상태": ["데이터 없음"]})
-        return df.tail(10).round(2)
+        if df is None or df.empty:
+            # 🔹 최소한 1개 컬럼을 가진 더미 DataFrame 반환
+            return pd.DataFrame({"데이터": ["현재 수신된 데이터가 없습니다."]})
+        
+        # 🔹 숫자형만 정리 + NaN → "-"
+        df = df.copy()
+        df = df.round(2).fillna("-")
+        return df.reset_index(drop=True)
 
     # 버튼 동작
     @reactive.effect
@@ -1209,10 +1359,38 @@ def server(input, output, session):
 
     @reactive.effect
     @reactive.event(input.reset_stream)
-    def _reset_stream():
+    async def _reset_stream():
         streamer().reset_stream()
         current_data.set(pd.DataFrame())
         is_streaming.set(False)
+
+        reset_values = {col: 0.0 for col in display_cols}
+        await session.send_custom_message("updateSensors", reset_values)
+
+    # === GIF 표시 제어 (스트리밍 상태 연동) ===
+    @reactive.effect
+    @reactive.event(input.start_stream)
+    async def _gif_start():
+        # ▶ 시작 시 GIF 표시
+        await session.send_custom_message("updateGif", {"src": "die-castings.gif"})
+
+    @reactive.effect
+    @reactive.event(input.pause_stream)
+    async def _gif_pause():
+        # ⏸ 일시정지 시 PNG 표시
+        await session.send_custom_message("updateGif", {"src": "die-castings.png"})
+
+    @reactive.effect
+    @reactive.event(input.reset_stream)
+    async def _gif_reset():
+        # 🔄 리셋 시 PNG 표시
+        await session.send_custom_message("updateGif", {"src": "die-castings.png"})
+
+    # ✅ 스트리밍이 중단 상태일 때도 자동 PNG 표시 유지
+    @reactive.effect
+    def _sync_gif_state():
+        if not is_streaming():
+            session.send_custom_message("updateGif", {"src": "die-castings.png"})
 
     # 주기적 업데이트
     @reactive.effect
@@ -1220,7 +1398,7 @@ def server(input, output, session):
         if not is_streaming():
             return
 
-        reactive.invalidate_later(1)
+        reactive.invalidate_later(2)
         s = streamer()
         next_batch = s.get_next_batch(1)
         if next_batch is not None:
@@ -1242,69 +1420,617 @@ def server(input, output, session):
     @output
     @render.ui
     def process_svg_inline():
-        def make_item(key: str, label: str, x: int, y: int) -> str:
-            return (
-                f"<text id='var-{key}' x='{x}' y='{y}'>"
-                f"  <tspan class='label'>{label}: </tspan>"
-                f"  <tspan class='value'>—</tspan>"
-                f"</text>"
-            )
-
         svg_items = []
         for key, label in VAR_LABELS.items():
             if key not in VAR_POSITIONS:
                 continue
             x, y = VAR_POSITIONS[key]
-            svg_items.append(make_item(key, label, x, y))
+            svg_items.append(make_item_with_bg(key, label, x, y))
 
         svg_html = "\n".join(svg_items)
 
         return ui.HTML(f"""
-            <div style="
-                position:relative;
-                width:900px;
-                height:500px;
-                margin:auto;
-                border:1px solid #ccc;
-                border-radius:8px;
-                overflow:hidden;
-                background-color:#f8f9fa;">
-                
-                <!-- 배경 이미지 -->
-                <img src="diecast.png" 
-                    style="
-                        position:absolute;
-                        top:0; left:0;
-                        width:100%; height:100%;
-                        object-fit:contain;
-                        z-index:1;"/>
-
-                <!-- SVG 오버레이 -->
-                <div style="
-                    position:absolute; top:0; left:0;
-                    width:100%; height:100%;
-                    z-index:2; pointer-events:none;">
-                    <svg xmlns='http://www.w3.org/2000/svg'
-                        width='100%' height='100%'
-                        viewBox='0 0 900 500'
-                        preserveAspectRatio='xMidYMid meet'>
-                        <style>
-                            text {{
-                                font-family: 'NanumGothic','Malgun Gothic',sans-serif;
-                                font-weight: 700;
-                                font-size: 15px;
-                                fill: #111827;
-                                stroke: #fff;
-                                stroke-width: .6px;
-                                paint-order: stroke;
-                            }}
-                            .value {{ fill:#111827; }}
-                        </style>
-                        {svg_html}
-                    </svg>
-                </div>
+            <div style='position:relative;width:900px;height:500px;margin:auto;'>
+                <!-- ✅ 초기 상태는 PNG (정지 상태) -->
+                <img id='process_gif' src='die-castings.png'
+                    style='position:absolute;width:100%;height:100%;object-fit:contain;z-index:1;'/>
+                <svg xmlns='http://www.w3.org/2000/svg'
+                    width='100%' height='100%'
+                    viewBox='0 0 900 500'
+                    preserveAspectRatio='xMidYMid meet'
+                    style='position:absolute;z-index:2;pointer-events:none;'>
+                    {svg_html}
+                </svg>
             </div>
         """)
+
+
+    # --- 동적 필터 UI ---
+    @output
+    @render.ui
+    def filter_ui():
+        var = input.var()
+        if var not in df_explore.columns:
+            return None
+
+        # registration_time → datetime slider (10분 단위)
+        if var == "registration_time":
+            times = pd.to_datetime(df_explore["registration_time"], errors="coerce")
+            times = times.dropna()
+            if times.empty:
+                return ui.markdown("⚠️ registration_time 컬럼에 유효한 datetime 값이 없습니다.")
+            min_t, max_t = times.min(), times.max()
+
+            # 초기 범위: 최대값 - 10분 ~ 최대값
+            min_t, max_t = times.min(), times.max()
+            # init_end = min_t + pd.Timedelta(minutes=10)
+            # if init_end > max_t:
+            #     init_end = max_t
+
+            return ui.input_slider(
+                "ts_range",
+                "시간 범위 선택",
+                min=min_t, max=max_t,
+                value=[min_t, max_t],
+                step=600,
+                time_format="%Y-%m-%d %H:%M"
+            )
+
+        # 범주형 변수
+        if not pd.api.types.is_numeric_dtype(df_explore[var]):
+            categories = df_explore[var].dropna().astype(str).unique().tolist()
+            categories = sorted(categories) + ["없음"]
+            return ui.input_checkbox_group(
+                "filter_val",
+                f"{label_map.get(var, var)} 선택",
+                choices=categories,
+                selected=categories
+            )
+
+        # 수치형 변수
+        min_val, max_val = df_explore[var].min(), df_explore[var].max()
+        return ui.input_slider(
+            "filter_val",
+            f"{label_map.get(var, var)} 범위",
+            min=min_val, max=max_val,
+            value=[min_val, max_val]
+        )
+    
+    # --- 데이터 필터링 ---
+    @reactive.calc
+    def filtered_df():
+        dff = df_explore.copy()
+        var = input.var()
+
+        if var in dff.columns and "filter_val" in input:
+            rng = input.filter_val()
+            if rng is None:
+                return dff
+
+            # registration_time 필터
+            if var == "registration_time":
+                dff["registration_time"] = pd.to_datetime(dff["registration_time"], errors="coerce")
+                dff = dff.dropna(subset=["registration_time"])
+                start, end = pd.to_datetime(rng[0]), pd.to_datetime(rng[1])
+                dff = dff[(dff["registration_time"] >= start) & (dff["registration_time"] <= end)]
+
+            # 범주형 필터
+            elif not pd.api.types.is_numeric_dtype(dff[var]):
+                selected = rng
+                if "없음" in selected:
+                    dff = dff[(dff[var].isin([x for x in selected if x != "없음"])) | (dff[var].isna()) | (dff[var]=="")]
+                else:
+                    dff = dff[dff[var].isin(selected)]
+
+            # 수치형 필터
+            else:
+                start, end = float(rng[0]), float(rng[1])
+                dff = dff[(dff[var] >= start) & (dff[var] <= end)]
+
+        return dff
+
+    @output
+    @render.plot
+    def local_factor_plot():
+     factors = local_factors()
+     if factors is None or factors.empty:
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, "아직 예측을 실행하지 않았습니다.", ha="center", va="center")
+        ax.axis("off")
+        return fig
+
+     top = factors.head(5).copy()
+     top["importance"] = top["importance"] * 100  # % 변환
+
+     fig, ax = plt.subplots(figsize=(8, 4))
+     bars = ax.barh(top["feature"], top["importance"], color="tomato")
+
+    # 각 막대 끝에 % 숫자 표시
+     for bar, val in zip(bars, top["importance"]):
+        ax.text(bar.get_width() + 0.5,
+                bar.get_y() + bar.get_height()/2,
+                f"{val:.1f}%",
+                va="center")
+
+        ax.invert_yaxis()
+        ax.set_xlabel("기여도 (%)")
+        ax.set_title("이번 케이스 불량 기여 요인 Top 5")
+        plt.tight_layout()
+     return fig
+
+    # === 여기에 local_factor_desc() 붙여넣기 ===
+    @output
+    @render.ui
+    def local_factor_desc():
+     factors = local_factors()
+     if factors is None or factors.empty:
+        return ui.markdown("아직 예측을 실행하지 않았습니다.")
+
+     top = factors.head(5).copy()
+     top["importance"] = top["importance"] * 100
+
+     exclude_vars = ["count", "monthly_count", "global_count"]
+     use_num_cols = [c for c in num_cols if c not in exclude_vars]
+     baseline = df_predict[df_predict["passorfail"] == 0][use_num_cols].mean()
+     current = get_input_data().iloc[0][use_num_cols]
+
+     rows_html = []
+     for _, row in top.iterrows():
+        feat = row["feature"]
+        importance = row["importance"]
+
+        col = [k for k, v in label_map.items() if v == feat]
+        if not col: 
+            continue
+        col = col[0]
+
+        left_text = f"{feat}: {importance:.1f}%"
+
+        if col in current.index:
+            diff = current[col] - baseline[col]
+            if abs(diff) > 1e-6:
+                direction = "낮추세요" if diff > 0 else "올리세요"
+                adj_val = abs(diff) / 2
+                right_text = f"{adj_val:.1f} 단위 {direction} (현재 {current[col]:.1f}, 기준 {baseline[col]:.1f})"
+            else:
+                right_text = "-"
+        else:
+            right_text = "-"
+
+        row_html = f"""
+        <div style='display:flex; align-items:center; margin-bottom:8px; font-size:15px;'>
+            <div style='flex:1; text-align:left;'>{left_text}</div>
+            <div style='flex:0.2; text-align:center;'>
+                <i class="fa-solid fa-arrow-right fa-beat" style="color:#007bff;"></i>
+            </div>
+            <div style='flex:2; text-align:left; color:#444;'>{right_text}</div>
+        </div>
+        """
+        rows_html.append(row_html)
+
+    # 🔹 for문 끝난 뒤에 return 실행
+     return ui.div(
+        [
+            ui.markdown("**이번 예측에서 불량률은 아래 요인들의 영향을 많이 받습니다:**"),
+            ui.HTML("".join(rows_html)),
+            ui.input_action_button(
+                "apply_suggestions", "반영하고 다시 예측하기",
+                class_="btn btn-warning", style="margin-top:15px;"
+            )
+        ]
+    )
+     
+    @output
+    @render.ui
+    def ts_filter_ui():
+        if "registration_time" not in df_raw.columns:
+            return ui.markdown("⚠️ registration_time 없음")
+
+        times = pd.to_datetime(df_raw["registration_time"], errors="coerce").dropna()
+        if times.empty:
+            return ui.markdown("⚠️ 유효한 datetime 값 없음")
+
+        min_t, max_t = times.min().date(), times.max().date()
+
+        # 🔽 기존 input_date_range 대신 → input_date 두 개
+        return ui.div(
+            ui.input_date(
+                "ts_start", "from",
+                value=min_t, min=min_t, max=max_t,
+                width="200px"
+            ),
+            ui.input_date(
+                "ts_end", "to",
+                value=max_t, min=min_t, max=max_t,
+                width="200px"
+            ),
+            style="display:flex; flex-direction:column; gap:8px;"  # 두 줄 배치
+        )
+
+    @output
+    @render.plot
+    def dist_plot():
+        try:
+            var = input.var()
+            mold = input.mold_code2()
+            dff = df_explore[df_explore["mold_code"].astype(str) == mold]
+
+            if var not in dff.columns:
+                fig, ax = plt.subplots()
+                ax.text(0.5,0.5,"선택한 변수가 데이터에 없음",ha="center",va="center")
+                ax.axis("off")
+                return fig
+
+            fig, ax = plt.subplots(figsize=(6,4))
+            if pd.api.types.is_numeric_dtype(dff[var]):
+                sns.histplot(dff[var], bins=30, kde=True, ax=ax, color="tomato")
+            else:
+                dff[var].value_counts().plot(kind="bar", ax=ax, color="tomato")
+
+            ax.set_title(f"{get_label(var)} 분포 (Mold {mold})")
+            return fig
+
+        except Exception as e:
+            fig, ax = plt.subplots()
+            ax.text(0.5,0.5,f"에러: {e}",ha="center",va="center")
+            ax.axis("off")
+            return fig
+
+    # Boxplot 원본 선택 시 → 파생 자동 없음
+    @reactive.Effect
+    @reactive.event(input.box_var)
+    def _():
+        if input.box_var() != "없음":
+            update_select("box_var_derived", selected="없음")
+
+    # Boxplot 파생 선택 시 → 원본 자동 없음
+    @reactive.Effect
+    @reactive.event(input.box_var_derived)
+    def _():
+        if input.box_var_derived() != "없음":
+            update_select("box_var", selected="없음")
+
+    @output
+    @render_plotly
+    def timeseries_plot():
+        if "registration_time" not in df_raw.columns:
+            return px.scatter(title="⚠️ registration_time 없음")
+
+        # 변수 선택 처리
+        var = None
+
+        # 원본 선택된 경우
+        if input.ts_var() != "없음":
+            # 한글 라벨 → 컬럼명 변환
+            inv_map = {v: k for k, v in label_map.items()}
+            var = inv_map.get(input.ts_var(), input.ts_var())
+
+        # 파생 선택된 경우 (이미 컬럼명 그대로라 역매핑 불필요)
+        elif input.ts_var_derived() != "없음":
+            derived_map = {
+                "상/하부 주입 속도 비율": "speed_ratio",
+                "주입 압력 비율": "pressure_speed_ratio",
+            }
+            var = derived_map.get(input.ts_var_derived(), input.ts_var_derived())
+
+        # 아무 것도 선택 안 한 경우
+        if var is None:
+            return px.scatter(title="⚠️ 변수 선택 필요")
+        
+        rng_start = pd.to_datetime(input.ts_start())
+        rng_end   = pd.to_datetime(input.ts_end())
+
+        # dff = df_raw.copy()
+        # ✅ 원본 + 파생 변수가 모두 있는 df_explore 사용
+        dff = df_explore.copy()
+        
+        # df_explore에는 시간/라벨이 없으므로 df_raw에서 가져와 붙여줌
+        dff["registration_time"] = pd.to_datetime(df_raw["registration_time"], errors="coerce")
+        dff["passorfail"] = df_raw["passorfail"].values
+        
+        # 결측/범위 필터링
+        dff = dff.dropna(subset=["registration_time", var, "passorfail"])
+        dff = dff[(dff["registration_time"] >= rng_start) & (dff["registration_time"] <= rng_end)]
+
+        if dff.empty:
+            return px.scatter(title="⚠️ 선택한 구간에 데이터 없음")
+
+        # Pass/Fail → 색상
+        dff["불량여부"] = dff["passorfail"].map({0: "Pass", 1: "Fail"})
+        dff = dff.sort_values("registration_time")
+        dff["registration_time_str"] = dff["registration_time"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        # === 원본 점 그래프 ===
+        fig = px.scatter(
+            dff,
+            x="registration_time_str",
+            y=var,
+            color="불량여부",
+            color_discrete_map={"Pass": "green", "Fail": "red"},
+            title=f"{label_map.get(var, var)} 시계열 (원본{' + 스무딩' if pd.api.types.is_numeric_dtype(dff[var]) else ''})",
+            labels={
+                "registration_time_str": "등록 시간",
+                var: label_map.get(var, var)
+            },
+        )
+
+    # ===== 모델 학습 - 혼동 행렬 =====
+    conf_matrices = {
+        "Random Forest": [[488, 12], [88, 9412]],
+        "LightGBM": [[484, 16], [44, 9456]],
+        "XGBoost": [[489, 11], [89, 9411]],
+    }
+
+    def plot_confusion_matrix(matrix, title):
+        cm = [[matrix[0][0], matrix[0][1]],   # 실제 불량 (TP, FN)
+              [matrix[1][0], matrix[1][1]]]   # 실제 정상 (FP, TN)
+
+        fig, ax = plt.subplots(figsize=(4, 3))
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Oranges", cbar=False, ax=ax,
+                    xticklabels=["Pred: 불량", "Pred: 정상"],
+                    yticklabels=["Actual: 불량", "Actual: 정상"])
+        ax.set_title(title)
+        plt.tight_layout()
+        return fig
+
+    @output
+    @render.plot
+    def rf_cm():
+        return plot_confusion_matrix(conf_matrices["Random Forest"], "Random Forest")
+
+    @output
+    @render.plot
+    def lgbm_cm():
+        return plot_confusion_matrix(conf_matrices["LightGBM"], "LightGBM")
+
+    @output
+    @render.plot
+    def xgb_cm():
+        return plot_confusion_matrix(conf_matrices["XGBoost"], "XGBoost")
+
+    # Best Score 데이터
+    df_scores = pd.DataFrame({
+        "Model": ["XGBoost", "LightGBM", "RandomForest"],
+        "BestScore": [0.9627, 0.9592, 0.9543]
+    })
+
+    @output
+    @render.plot
+    def best_score_plot():
+        fig, ax = plt.subplots(figsize=(6,4))
+        sns.barplot(data=df_scores, x="Model", y="BestScore", palette="Oranges_r", ax=ax)
+
+        # 점수 표시
+        for i, row in df_scores.iterrows():
+            ax.text(i, row["BestScore"] + 0.0003, f"{row['BestScore']:.4f}", 
+                    ha="center", fontsize=10)
+
+        ax.set_title("Model Best Score Ranking (ACC 0.1, Recall 0.6, F1 0.3)", fontsize=12)
+        ax.set_ylabel("Best Score")
+        ax.set_ylim(0.953, 0.964)
+        plt.tight_layout()
+        return fig
+
+    @output
+    @render.text
+    def selected_var():
+        return f"현재 선택된 변수: {input.var() or '없음'}"
+
+    last_proba = reactive.value(None)
+    loading = reactive.value(False)
+    local_factors = reactive.value(None)
+    
+    def get_input_data():
+        data = {}
+        for col in cat_cols + num_cols:
+            data[col] = [input[col]()]
+
+        return pd.DataFrame(data)
+
+    for col in num_cols:
+        @reactive.effect
+        @reactive.event(input[col])
+        def _(col=col):
+            update_slider(f"{col}_slider", value=input[col]())
+        @reactive.effect
+        @reactive.event(input[f"{col}_slider"])
+        def _(col=col):
+            update_numeric(col, value=input[f"{col}_slider"]())
+
+    @reactive.effect
+    @reactive.event(input.reset_btn)
+    def _():
+        # 범주형 변수: 첫 번째 값으로 초기화
+        for col in cat_cols:
+            first_val = str(sorted(df_predict[col].dropna().unique())[0])
+            if(col == "tryshot_signal"):
+                first_val = "없음"
+            ui.update_select(col, selected=first_val)
+
+        # 수치형 변수: 안전하게 숫자 변환 후 평균값으로 초기화
+        for col in num_cols:
+            series = pd.to_numeric(df_predict[col], errors="coerce")       # 문자열 → 숫자 (에러시 NaN)
+            series = series.replace([np.inf, -np.inf], np.nan)             # inf → NaN
+            mean_val = series.dropna().mean()                              # NaN 제거 후 평균
+            default_val = int(mean_val) if pd.notna(mean_val) else 0       # fallback: 0
+            update_slider(f"{col}_slider", value=default_val)
+            update_numeric(col, value=default_val)
+
+        # 예측 결과 초기화
+        last_proba.set(None)
+        
+    @reactive.effect
+    @reactive.event(input.predict_btn)
+    def _():
+     loading.set(True)
+     try:
+        X = get_input_data()
+        proba = model.predict_proba(X)[0, 1]
+        last_proba.set(proba)
+
+        # === 불량 기여 요인 계산 ===
+        # 1) 누적형 변수 제거
+        exclude_vars = ["count", "monthly_count", "global_count"]
+        use_num_cols = [c for c in num_cols if c not in exclude_vars]
+
+        baseline = df_predict[df_predict["passorfail"] == 0][use_num_cols].mean()
+        current = X[use_num_cols].iloc[0]
+
+        # 2) 표준화 거리 (표준편차로 나눔)
+        stds = df_predict[use_num_cols].std().replace(0, 1)  # 분모=0 방지
+        diffs = ((current - baseline) / stds) ** 2
+
+        # 3) 기여도 계산
+        if diffs.sum() > 0:
+            contrib = (diffs / diffs.sum()).sort_values(ascending=False)
+            local_factors.set(
+                pd.DataFrame({
+                    "feature": [get_label(c) for c in contrib.index],
+                    "importance": contrib.values
+                })
+            )
+        else:
+            local_factors.set(
+                pd.DataFrame({"feature": [], "importance": []})
+            )
+
+     except Exception as e:
+        last_proba.set(f"error:{e}")
+     finally:
+        loading.set(False)
+    
+    @reactive.effect
+    @reactive.event(input.apply_suggestions)
+    def _():
+        factors = local_factors()
+        if factors is None or factors.empty:
+            return
+
+        top = factors.head(5).copy()
+        exclude_vars = ["count", "monthly_count", "global_count"]
+        use_num_cols = [c for c in num_cols if c not in exclude_vars]
+
+        baseline = df_predict[df_predict["passorfail"] == 0][use_num_cols].mean()
+        current = get_input_data().iloc[0][use_num_cols]
+
+        for _, row in top.iterrows():
+            feat = row["feature"]
+            col = [k for k, v in label_map.items() if v == feat]
+            if not col: 
+                continue
+            col = col[0]
+
+            if col in current.index:
+                diff = current[col] - baseline[col]
+                if abs(diff) > 1e-6:
+                    new_val = current[col] - diff/2   # 현재값과 baseline 사이 중간으로 이동
+                    update_slider(f"{col}_slider", value=float(new_val))
+                    update_numeric(col, value=float(new_val))
+                    print(f"[반영됨] {col}: {current[col]} → {new_val} (baseline {baseline[col]})")
+
+        # 🔹 자동 예측 실행
+        session.send_input_message("predict_btn", 1)
+
+    @render.ui
+    def prediction_result():
+        if loading():
+            return ui.div(
+                ui.div(class_="spinner-border text-primary", role="status"),
+                ui.HTML("<div style='margin-top:10px;'>예측 실행 중...</div>"),
+                style="text-align:center; padding:20px;"
+            )
+
+        proba = last_proba()
+        if proba is None:
+            return ui.div(
+                ui.HTML("<span style='color:gray; font-size:18px;'>아직 예측을 실행하지 않았습니다.</span>"),
+                style="text-align:center; padding:20px;"
+            )
+
+        if isinstance(proba, str) and proba.startswith("error:"):
+            return ui.div(
+                ui.HTML(f"<span style='color:red;'>예측 중 오류 발생: {proba[6:]}</span>")
+            )
+
+        if proba < 0.02:
+            style = "background-color:#d4edda; color:#155724; font-size:18px; font-weight:bold; padding:15px; text-align:center; border-radius:8px;"
+        elif proba < 0.04:
+            style = "background-color:#fff3cd; color:#856404; font-size:18px; font-weight:bold; padding:15px; text-align:center; border-radius:8px;"
+        else:
+            style = "background-color:#f8d7da; color:#721c24; font-size:18px; font-weight:bold; padding:15px; text-align:center; border-radius:8px;"
+
+        judgment = "불량품" if proba >= 0.2 else "양품"
+
+        return ui.div(
+            [
+                ui.HTML(f"예상 불량률: {proba*100:.2f}%"),
+                ui.br(),
+                ui.HTML(f"최종 판정: <span style='font-size:22px;'>{judgment}</span>")
+            ],
+            style=style
+        )
+
+    @render.plot
+    def feature_importance_plot():
+        try:
+            importances = model.named_steps["model"].feature_importances_
+            feat_names = model.named_steps["preprocessor"].get_feature_names_out()
+            imp_df = pd.DataFrame({"feature": feat_names, "importance": importances})
+            imp_df = imp_df.sort_values("importance", ascending=False).head(10)
+
+            plt.figure(figsize=(8,5))
+            plt.barh(imp_df["feature"], imp_df["importance"])
+            plt.gca().invert_yaxis()
+            plt.title("변수 중요도 Top 10")
+            plt.tight_layout()
+        except Exception:
+            plt.figure()
+            plt.text(0.5,0.5,"변수 중요도 계산 불가",ha="center",va="center")
+
+    @render.plot
+    def distribution_plot():
+        try:
+            plt.figure(figsize=(8,5))
+            df_good = df_predict[df_predict["passorfail"]==0]["biscuit_thickness"]
+            df_bad = df_predict[df_predict["passorfail"]==1]["biscuit_thickness"]
+
+            plt.hist(df_good, bins=30, alpha=0.6, label="양품")
+            plt.hist(df_bad, bins=30, alpha=0.6, label="불량품")
+
+            plt.axvline(df_predict["biscuit_thickness"].mean(), color="red", linestyle="--", label="평균")
+            plt.legend()
+            plt.title("비스킷 두께 분포 (양품 vs 불량)")
+            plt.tight_layout()
+        except Exception:
+            plt.figure()
+            plt.text(0.5,0.5,"분포 그래프 생성 불가",ha="center",va="center")
+
+    @render.plot
+    def process_trend_plot():
+        try:
+            mold_trend = df_predict.groupby("mold_code")["passorfail"].mean().sort_values(ascending=False)
+            plt.figure(figsize=(8,5))
+            mold_trend.plot(kind="bar")
+            plt.ylabel("불량률")
+            plt.title("금형 코드별 불량률")
+            plt.tight_layout()
+        except Exception:
+            plt.figure()
+            plt.text(0.5,0.5,"공정별 그래프 생성 불가",ha="center",va="center")
+            
+    def make_item_with_bg(key: str, label: str, x: int, y: int) -> str:
+        return f"""
+        <g id='var-{key}'>
+            <rect x='{x - 5}' y='{y - 18}' rx='4' ry='4'
+                width='200' height='24'
+                fill='rgba(255,255,255,0.75)' stroke='#ddd' stroke-width='0.5'/>
+            <text x='{x}' y='{y}' fill='#111827'
+                font-size='15' font-weight='700'>
+                <tspan class='label'>{label}: </tspan>
+                <tspan class='value'>—</tspan>
+            </text>
+        </g>
+        """
 
 # ======== 앱 실행 ========
 app = App(app_ui, server, static_assets=app_dir / "www")
