@@ -145,11 +145,11 @@ df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace(
 df_predict = pd.read_csv("./data/train.csv")
 df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace([np.inf, -np.inf], np.nan)
 
-df_predict = df_predict[
-    (df_predict["low_section_speed"] != 65535) &
-    (df_predict["lower_mold_temp3"] != 65503) &
-    (df_predict["physical_strength"] != 65535)
-]
+# df_predict = df_predict[
+#     (df_predict["low_section_speed"] != 65535) &
+#     (df_predict["lower_mold_temp3"] != 65503) &
+#     (df_predict["physical_strength"] != 65535)
+# ]
 
 # 탐색 탭용 (필터링/EDA)
 drop_cols_explore = ["id","line","name","mold_name","date","time", "registration_time"]
@@ -809,8 +809,8 @@ def main_page(selected_tab: str):
                             ui.card_header("공정 상태 관련", style=""),
                             ui.layout_columns(
                                 ui.input_numeric("count", "일조 누적 제품 개수", value=int(df_predict["count"].mean())),
-                                ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
-                                ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
+                                # ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
+                                # ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
                                 ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=int(df_predict["speed_ratio"].mean())),
                                 ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=int(df_predict["pressure_speed_ratio"].mean())),
                                 make_select("working", "장비 가동 여부"),
@@ -855,7 +855,7 @@ def main_page(selected_tab: str):
                                 make_num_slider("upper_mold_temp3"),
                                 make_num_slider("lower_mold_temp1"),
                                 make_num_slider("lower_mold_temp2"),
-                                make_num_slider("lower_mold_temp3"),
+                                # make_num_slider("lower_mold_temp3"),
                                 make_num_slider("Coolant_temperature"),
                                 col_widths=[3,3,3,3]
                             )
