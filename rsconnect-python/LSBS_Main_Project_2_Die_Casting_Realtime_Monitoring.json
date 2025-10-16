@@ -1,0 +1,12 @@
+{
+    "https://api.shinyapps.io": {
+        "server_url": "https://api.shinyapps.io",
+        "filename": "C:\\Users\\USER\\Documents\\DS Projects\\LSBS_Main_Project_2_Die_Casting_Realtime_Monitoring",
+        "app_url": "https://spicywinter.shinyapps.io/main_proj_2_monitoring/",
+        "app_id": "15772461",
+        "app_guid": null,
+        "title": "main_proj_2_monitoring",
+        "app_mode": "python-shiny",
+        "app_store_version": 1
+    }
+}

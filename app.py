@@ -1338,12 +1338,14 @@ def server(input, output, session):
     def recent_data_table():
         df = current_data()
         if df is None or df.empty:
-            # 🔹 최소한 1개 컬럼을 가진 더미 DataFrame 반환
             return pd.DataFrame({"데이터": ["현재 수신된 데이터가 없습니다."]})
-        
-        # 🔹 숫자형만 정리 + NaN → "-"
-        df = df.copy()
-        df = df.round(2).fillna("-")
+
+        df = df.copy().round(2).fillna("-")
+
+        # ✅ 컬럼명을 한글로 매핑
+        inv_label_map = label_map  # 그대로 사용해도 됨
+        df.rename(columns=inv_label_map, inplace=True)
+
         return df.reset_index(drop=True)
 
     # 버튼 동작
