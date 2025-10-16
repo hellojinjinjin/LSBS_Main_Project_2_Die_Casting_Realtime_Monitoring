@@ -8,3 +8,4 @@ shiny
 shinywidgets
 scikit-learn
 scipy
+fpdf
