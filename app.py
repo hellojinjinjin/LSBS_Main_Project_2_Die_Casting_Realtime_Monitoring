@@ -34,7 +34,7 @@ display_cols = [
 ]
 
 # 스트리밍 초기 설정
-streamer = reactive.Value(RealTimeStreamer(streaming_df[display_cols]))
+streamer = reactive.Value(RealTimeStreamer(streaming_df))
 current_data = reactive.Value(pd.DataFrame())
 is_streaming = reactive.Value(False)
 
@@ -145,11 +145,11 @@ df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace(
 df_predict = pd.read_csv("./data/train.csv")
 df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace([np.inf, -np.inf], np.nan)
 
-df_predict = df_predict[
-    (df_predict["low_section_speed"] != 65535) &
-    (df_predict["lower_mold_temp3"] != 65503) &
-    (df_predict["physical_strength"] != 65535)
-]
+# df_predict = df_predict[
+#     (df_predict["low_section_speed"] != 65535) &
+#     (df_predict["lower_mold_temp3"] != 65503) &
+#     (df_predict["physical_strength"] != 65535)
+# ]
 
 # 탐색 탭용 (필터링/EDA)
 drop_cols_explore = ["id","line","name","mold_name","date","time", "registration_time"]
@@ -567,6 +567,12 @@ def login_page():
                     "align-items:center; height:100vh; background-color:#f8f9fa;"
                 )
             },
+            # ▼ 로고 이미지
+            ui.img(
+                src="LS_Logo.svg",   # www 폴더 안에 LS_Logo.svg 위치해야 함
+                style="width:150px; margin-bottom:25px;"
+            ),
+            # ▼ 로그인 카드
             ui.card(
                 {
                     "style": (
@@ -707,6 +713,29 @@ def field_dashboard_ui():
         ),
     )
 
+def floating_stream_bar():
+    """헤더 바로 아래 탭 스타일 스트리밍 제어 바"""
+    return ui.div(
+        {
+            "style": (
+                "display:flex; align-items:center; gap:16px;"
+                "background-color:#fef6ee; border:1px solid #e0c8a0;"
+                "border-bottom:none; border-radius:8px 8px 0 0;"
+                "padding:8px 16px; position:absolute; top:60px; right:40px;"
+                "z-index:1500; font-weight:bold; color:#5c4b3b;"
+            )
+        },
+        # 좌측: 제목
+        ui.div("스트리밍 제어", style="font-weight:bold; font-size:15px;"),
+        # 상태 표시
+        ui.output_ui("stream_status"),
+        # 버튼 그룹
+        ui.div(
+            {"style": "display:flex; gap:8px;"},
+            ui.output_ui("stream_buttons")
+        ),
+    )
+
 def load_svg_inline():
     svg_path = os.path.join(APP_DIR, "www", "diagram.svg")
     with open(svg_path, "r", encoding="utf-8") as f:
@@ -774,6 +803,130 @@ def main_page(selected_tab: str):
         # 🧭 품질 모니터링 (예측 시뮬레이션 UI 포함)
         "quality": ui.navset_tab(
 
+                        # === 공정 상태 관련 (4열) ===
+                        ui.card(
+                            ui.card_header("공정 상태 관련", style=""),
+                            ui.layout_columns(
+                                ui.input_numeric("count", "일조 누적 제품 개수", value=int(df_predict["count"].mean())),
+                                # ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
+                                # ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
+                                ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=int(df_predict["speed_ratio"].mean())),
+                                ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=int(df_predict["pressure_speed_ratio"].mean())),
+                                make_select("working", "장비 가동 여부"),
+                                make_select("emergency_stop", "비상 정지 여부"),
+                                make_select("tryshot_signal", "측정 딜레이 여부"),
+                                make_select("shift", "주, 야간 조"),
+                                col_widths=[3,3,3,3]
+                            )
+                        ),
+
+                        # === 용융 단계 (n행 4열) ===
+                        ui.card(
+                            ui.card_header("용융 단계", style=""),
+                            ui.layout_columns(
+                                make_num_slider("molten_temp"),
+                                make_select("heating_furnace", "용해로"),
+                                col_widths=[6,6]
+                            )
+                        ),
+
+                        # === 충진 단계 (n행 4열) ===
+                        ui.card(
+                            ui.card_header("충진 단계", style=""),
+                            ui.layout_columns(
+                                make_num_slider("sleeve_temperature"),
+                                make_num_slider("EMS_operation_time"),
+                                make_num_slider("low_section_speed"),
+                                make_num_slider("high_section_speed"),
+                                make_num_slider("molten_volume"),
+                                make_num_slider("cast_pressure"),
+                                ui.input_select("mold_code", "금형 코드", choices=sorted(df_predict["mold_code"].dropna().unique().astype(str))),
+                                col_widths=[3,3,3,3]
+                            )
+                        ),
+
+                        # === 냉각 단계 (n행 4열) ===
+                        ui.card(
+                            ui.card_header("냉각 단계", style=""),
+                            ui.layout_columns(
+                                make_num_slider("upper_mold_temp1"),
+                                make_num_slider("upper_mold_temp2"),
+                                make_num_slider("upper_mold_temp3"),
+                                make_num_slider("lower_mold_temp1"),
+                                make_num_slider("lower_mold_temp2"),
+                                # make_num_slider("lower_mold_temp3"),
+                                make_num_slider("Coolant_temperature"),
+                                col_widths=[3,3,3,3]
+                            )
+                        ),
+
+                        # === 공정 속도 관련 (n행 4열) ===
+                        ui.card(
+                            ui.card_header("공정 속도 관련", style=""),
+                            ui.layout_columns(
+                                make_num_slider("facility_operation_cycleTime"),
+                                make_num_slider("production_cycletime"),
+                                col_widths=[6,6]
+                            )
+                        ),
+
+                        # === 품질 및 성능 (n행 4열) ===
+                        ui.card(
+                            ui.card_header("품질 및 성능", style=""),
+                            ui.layout_columns(
+                                make_num_slider("biscuit_thickness"),
+                                make_num_slider("physical_strength"),
+                                col_widths=[6,6]
+                            )
+                        )
+                    ),
+                    style="max-width: 1200px; margin: 0 auto;"
+                ),
+
+                ui.br(),
+
+                # 예측 실행 + 결과 카드 (sticky)
+                ui.div(
+                    ui.card(
+                        ui.card_header(
+                            ui.div(
+                                [
+                                    ui.input_action_button(
+                                        "predict_btn", "예측 실행",
+                                        class_="btn btn-primary btn-lg",
+                                        style="flex:1;"
+                                    ),
+                                    ui.input_action_button(
+                                        "reset_btn", ui.HTML('<i class="fa-solid fa-rotate-left"></i>'),
+                                        class_="btn btn-secondary btn-lg",
+                                        style="margin-left:10px; width:60px;"
+                                    )
+                                ],
+                                style="display:flex; align-items:center; width:100%;"
+                            ),
+                            style="background-color:#f8f9fa; text-align:center;" 
+                        ),
+                        ui.output_ui("prediction_result")
+                    ),
+                    style="""
+                        position: -webkit-sticky;
+                        position: sticky;
+                        bottom: 1px;
+                        z-index: 1000;
+                        max-width: 1200px;
+                        margin: 0 auto;
+                    """
+                ),
+
+            ),
+            ui.nav_panel("개선 방안",
+                ui.card(
+                    ui.card_header("불량 기여 요인 Top 5", style="text-align:center;"),
+                    ui.output_plot("local_factor_plot"),
+                    ui.hr(),
+                    ui.output_ui("local_factor_desc")   # ← 설명 칸 추가
+                )
+            ),
             ui.nav_panel(
                 "실시간 관리도",
                 ui.card(
@@ -1218,7 +1371,14 @@ ui.nav_panel("예측 및 개선",
         ui.div(tab_contents.get(selected_tab, ui.p("페이지 없음"))),
     )
 
-    return ui.page_fluid(header_bar, content_area)
+    return ui.page_fluid(
+        header_bar,
+        ui.div(
+            {"style": "position:relative;"},
+            floating_stream_bar(),  # ✅ 새로운 탭 형태 바 적용
+            content_area
+        )
+    )
 
 # ======== 전체 UI ========
 app_ui = ui.page_fluid(global_head, ui.output_ui("main_ui"))
@@ -1501,7 +1661,7 @@ def server(input, output, session):
     @output
     @render.ui
     def stream_status():
-        return ui.div("🟢 스트리밍 중" if is_streaming() else "🔴 정지됨")
+        return ui.div("🟢 " if is_streaming() else "🔴 ")
 
     @output
     @render.plot
@@ -1578,7 +1738,49 @@ def server(input, output, session):
 
         return df.reset_index(drop=True)
 
-    # 버튼 동작
+    # ---------- 버튼 렌더링 ----------
+    @output
+    @render.ui
+    def stream_buttons():
+        """스트리밍 상태에 따라 버튼 표시 전환 (아이콘만, 따뜻한 톤으로 통일)"""
+        btn_base = (
+            "width:36px; height:36px; display:flex; align-items:center; justify-content:center;"
+            "border:none; border-radius:6px; font-size:16px; color:white;"
+            "box-shadow:0 2px 4px rgba(0,0,0,0.15);"
+        )
+
+        if is_streaming():
+            # ▶ 스트리밍 중 → 일시정지 + 리셋
+            return ui.div(
+                {"style": "display:flex; gap:8px;"},
+                ui.input_action_button(
+                    "pause_stream",
+                    ui.HTML('<i class="fa-solid fa-pause"></i>'),
+                    style=btn_base + "background-color:#fbbf24;",  # 밝은 주황
+                ),
+                ui.input_action_button(
+                    "reset_stream",
+                    ui.HTML('<i class="fa-solid fa-rotate-right"></i>'),
+                    style=btn_base + "background-color:#d97706;",  # 연갈색
+                ),
+            )
+        else:
+            # ⏹ 정지 상태 → 시작 + 리셋
+            return ui.div(
+                {"style": "display:flex; gap:8px;"},
+                ui.input_action_button(
+                    "start_stream",
+                    ui.HTML('<i class="fa-solid fa-play"></i>'),
+                    style=btn_base + "background-color:#f59e0b;",  # 살구빛 오렌지
+                ),
+                ui.input_action_button(
+                    "reset_stream",
+                    ui.HTML('<i class="fa-solid fa-rotate-right"></i>'),
+                    style=btn_base + "background-color:#d97706;",  # 연갈색
+                ),
+            )
+
+    # ---------- 버튼 동작 ----------
     @reactive.effect
     @reactive.event(input.start_stream)
     def _start_stream():
@@ -1595,7 +1797,6 @@ def server(input, output, session):
         streamer().reset_stream()
         current_data.set(pd.DataFrame())
         is_streaming.set(False)
-
         reset_values = {col: 0.0 for col in display_cols}
         await session.send_custom_message("updateSensors", reset_values)
 
