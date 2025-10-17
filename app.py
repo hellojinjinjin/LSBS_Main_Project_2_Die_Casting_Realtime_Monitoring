@@ -822,16 +822,28 @@ def main_page(selected_tab: str):
 
         
 
+
+
         # 🧭 품질 모니터링 (예측 시뮬레이션 UI 포함)
         "quality": ui.navset_tab(
-            ui.nav_panel("개선 방안",
+            ui.nav_panel("원인 분석",
                 ui.card(
-                    ui.card_header("불량 기여 요인 Top 5", style="text-align:center;"),
-                    ui.output_plot("local_factor_plot"),
+                    ui.card_header("불량 및 공정 에러 발생 조건", style="text-align:center;"),
+                    ui.output_plot("local_factor_plot", click=True),   # 클릭 가능한 그래프
                     ui.hr(),
-                    ui.output_ui("local_factor_desc")   # ← 설명 칸 추가
+                    ui.output_ui("local_factor_desc"),      # 텍스트 설명
+                    ui.output_ui("sensor_detail_modal")     # 클릭 시 뜨는 모달창
                 )
             ),
+
+
+
+
+
+
+
+
+
             ui.nav_panel(
                 "실시간 관리도",
                 ui.card(
@@ -2208,6 +2220,240 @@ def server(input, output, session):
             ui.hr(),
             ui.output_ui("local_factor_desc")
         )
+
+
+
+##### 원인 분석 - 불량 및 공정 에러 발생 조건
+
+
+    @output
+    @render.plot
+    def local_factor_plot():
+        df = current_data()
+        if df is None or df.empty:
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "실시간 데이터 수신 대기 중...", ha="center", va="center", fontsize=13)
+            ax.axis("off")
+            return fig
+
+        # 분석 대상 컬럼 선택
+        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        if not numeric_cols:
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "수치형 데이터 없음", ha="center", va="center")
+            ax.axis("off")
+            return fig
+
+        # 3시그마 기반 이상 탐지
+        mean_std = df[numeric_cols].describe().T[["mean", "std"]]
+        latest = df.iloc[-1]
+        z_scores = (latest - mean_std["mean"]) / mean_std["std"]
+        z_scores = z_scores.dropna().sort_values(ascending=False)
+
+        # 시각화
+        fig, ax = plt.subplots(figsize=(8, 4))
+        colors = ["red" if abs(z) > 3 else "gray" for z in z_scores]
+        ax.barh(z_scores.index, z_scores.values, color=colors)
+        ax.set_xlabel("Z-Score (표준편차 기준)")
+        ax.set_title("실시간 이상 감지 센서 (3σ 기준)")
+        plt.tight_layout()
+        return fig
+
+
+    @output
+    @render.ui
+    def local_factor_desc():
+        df = current_data()
+        if df is None or df.empty:
+            return ui.p("⚪ 실시간 데이터 수신 중이 아닙니다.", style="color:gray;")
+
+        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        if not numeric_cols:
+            return ui.p("데이터에 수치형 센서가 없습니다.")
+
+        mean_std = df[numeric_cols].describe().T[["mean", "std"]]
+        latest = df.iloc[-1]
+
+        anomalies = []
+        for col in numeric_cols:
+            val, mean, std = latest[col], mean_std.loc[col, "mean"], mean_std.loc[col, "std"]
+            if abs(val - mean) > 3 * std:
+                anomalies.append((col, val, mean, std))
+
+        if not anomalies:
+            return ui.p("✅ 현재 이상 조건이 없습니다.", style="color:green;")
+
+        # ⚠ 이상 항목 요약
+        alerts = []
+        for col, val, mean, std in anomalies:
+            alerts.append(
+                f"<li><b>{col}</b>: 현재 {val:.2f} (평균 {mean:.2f} ± {3*std:.2f}) → <span style='color:red;'>이상 감지</span></li>"
+            )
+
+        return ui.HTML(f"""
+            <div style="background:#fff7f7; padding:10px; border-radius:8px;">
+                <p><b>⚠ 공정 이상 감지 항목 ({len(anomalies)}개)</b></p>
+                <ul>{''.join(alerts)}</ul>
+            </div>
+        """)
+
+
+
+
+    # --- 선택된 변수 저장용 reactive 변수 ---
+    selected_sensor = reactive.Value(None)
+
+    # --- 이상 감지 그래프 ---
+    @output
+    @render.plot
+    def local_factor_plot():
+        df = current_data()
+        if df is None or df.empty:
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "실시간 데이터 수신 대기 중...", ha="center", va="center", fontsize=13)
+            ax.axis("off")
+            return fig
+
+        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        if not numeric_cols:
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "수치형 데이터 없음", ha="center", va="center")
+            ax.axis("off")
+            return fig
+
+        mean_std = df[numeric_cols].describe().T[["mean", "std"]]
+        latest = df.iloc[-1]
+        z_scores = (latest - mean_std["mean"]) / mean_std["std"]
+        z_scores = z_scores.dropna().sort_values(ascending=True)  # 아래→위 방향 막대
+
+        colors = ["#e74c3c" if abs(z) > 3 else "#95a5a6" for z in z_scores]
+
+        fig, ax = plt.subplots(figsize=(7, 5))
+        bars = ax.barh(z_scores.index, z_scores.values, color=colors)
+        ax.set_xlabel("Z-score (표준편차 기준)")
+        ax.set_title("실시간 이상 감지 센서 (클릭 시 상세보기)")
+        ax.grid(True, axis="x", linestyle="--", alpha=0.5)
+        plt.tight_layout()
+
+        # --- 클릭 이벤트 연결용 ---
+        for bar, name in zip(bars, z_scores.index):
+            bar.set_gid(name)
+
+        return fig
+
+
+    # --- 이상 요약 설명 ---
+    @output
+    @render.ui
+    def local_factor_desc():
+        df = current_data()
+        if df is None or df.empty:
+            return ui.p("⚪ 실시간 데이터 수신 중이 아닙니다.", style="color:gray;")
+
+        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        if not numeric_cols:
+            return ui.p("데이터에 수치형 센서가 없습니다.")
+
+        mean_std = df[numeric_cols].describe().T[["mean", "std"]]
+        latest = df.iloc[-1]
+        anomalies = []
+        for col in numeric_cols:
+            val, mean, std = latest[col], mean_std.loc[col, "mean"], mean_std.loc[col, "std"]
+            if abs(val - mean) > 3 * std:
+                anomalies.append((col, val, mean, std))
+
+        if not anomalies:
+            return ui.p("✅ 현재 이상 조건이 없습니다.", style="color:green;")
+
+        alerts = [
+            f"<li><b>{col}</b>: 현재 {val:.2f} (평균 {mean:.2f} ± {3*std:.2f}) → <span style='color:red;'>이상 감지</span></li>"
+            for col, val, mean, std in anomalies
+        ]
+        return ui.HTML(f"""
+            <div style="background:#fff7f7; padding:10px; border-radius:8px;">
+                <p><b>⚠ 공정 이상 감지 항목 ({len(anomalies)}개)</b></p>
+                <ul>{''.join(alerts)}</ul>
+                <p style='color:gray;font-size:13px;'>그래프를 클릭하면 상세 추이를 볼 수 있습니다.</p>
+            </div>
+        """)
+
+
+    # --- 클릭 이벤트 처리 ---
+    @reactive.effect
+    @reactive.event(input.local_factor_plot_click)
+    def _handle_click():
+        click_info = input.local_factor_plot_click()
+        if not click_info:
+            return
+        selected_sensor.set(click_info["domain"]["y"])  # y축 이름(센서명) 저장
+
+
+    # --- 클릭된 센서 상세 모달 ---
+    @output
+    @render.ui
+    def sensor_detail_modal():
+        sensor = selected_sensor.get()
+        if not sensor:
+            return None
+
+        df = current_data()
+        if df is None or df.empty or sensor not in df.columns:
+            return None
+
+        fig, ax = plt.subplots(figsize=(7, 4))
+        ax.plot(df[sensor].values[-100:], marker="o", linestyle="-", alpha=0.7)
+        ax.set_title(f"📈 센서 '{sensor}' 최근 추이 (최근 100개 샘플)")
+        ax.set_xlabel("시간순")
+        ax.set_ylabel(sensor)
+        ax.grid(True)
+
+        ui.modal_show(
+            ui.modal(
+                ui.output_plot("sensor_detail_plot"),
+                title=f"🔍 {sensor} 센서 상세 그래프",
+                size="l",
+                easy_close=True
+            )
+        )
+
+
+    @output
+    @render.plot
+    def sensor_detail_plot():
+        sensor = selected_sensor.get()
+        df = current_data()
+        if not sensor or df is None or df.empty or sensor not in df.columns:
+            fig, ax = plt.subplots()
+            ax.axis("off")
+            ax.text(0.5, 0.5, "선택된 센서 데이터가 없습니다.", ha="center", va="center")
+            return fig
+
+        fig, ax = plt.subplots(figsize=(7, 4))
+        ax.plot(df[sensor].values[-100:], marker="o", linestyle="-", alpha=0.7)
+        ax.set_title(f"📈 센서 '{sensor}' 최근 추이 (최근 100개 샘플)")
+        ax.set_xlabel("시간순")
+        ax.set_ylabel(sensor)
+        ax.grid(True)
+        return fig
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 # 🟢 TAB2. 품질 끝
 # ============================================================
