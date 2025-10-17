@@ -791,9 +791,36 @@ def main_page(selected_tab: str):
     }
     tab_contents = {
         "field": ui.navset_tab(
-            ui.nav_panel("실시간 대시보드", field_dashboard_ui()),
-            ui.nav_panel("생산계획 시뮬레이션", plan_page_ui())
+    ui.nav_panel("실시간 대시보드", field_dashboard_ui()),
+
+    # ───────── 이번달 생산목표 ─────────
+    ui.nav_panel(
+    "이달의 생산목표",
+    ui.layout_sidebar(
+        ui.sidebar(
+            ui.input_numeric("monthly_target_cur", "이번달 목표 생산량", value=20000, min=0, step=100),
+            ui.input_date("selected_day", "조회 기준일", value=datetime.date.today()),
+            ui.input_action_button("refresh_actual", "갱신", class_="btn-primary"),
+            style="background-color:#fffaf2; padding:20px; border-radius:10px;"
         ),
+        ui.card(
+            ui.card_header("📅 이번달 생산 현황"),
+            ui.output_ui("calendar_view_current"),
+            ui.hr(),
+            ui.output_text("daily_summary"),   # ← 누적/예상 표시
+            style="background-color:white; padding:20px;"
+        )
+    )
+),
+
+    # ───────── 다음달 생산목표 ─────────
+    ui.nav_panel(
+        "다음달의 생산목표",
+        plan_page_ui()  # ✅ 기존의 시뮬레이션 탭
+    ),
+),
+
+        
 
         # 🧭 품질 모니터링 (예측 시뮬레이션 UI 포함)
         "quality": ui.navset_tab(
@@ -1198,8 +1225,87 @@ def server(input, output, session):
     
         
 # ============================================================
-# 🟢 TAB1. 현장 관리
+# 🟢 TAB1. 현장 관리 (최신 Shiny 버전 호환)
 # ============================================================
+
+    @render.ui
+    @reactive.event(input.refresh_actual)
+    def calendar_view_current():
+        """이번 달 생산 달력 표시"""
+        today = datetime.date.today()
+        year, month = today.year, today.month
+        selected_day = input.selected_day()
+        target = input.monthly_target_cur()
+
+        df_actual = train.copy()
+        df_actual["time"] = pd.to_datetime(df_actual["time"], errors="coerce")
+        df_actual["date"] = df_actual["time"].dt.date
+        daily_actual = (
+            df_actual.groupby("date")["count"]
+            .agg(["min", "max"])
+            .reset_index()
+        )
+        daily_actual["daily_prod"] = daily_actual["max"] - daily_actual["min"] + 1
+
+        produced = daily_actual.loc[daily_actual["date"] <= selected_day, "daily_prod"].sum()
+        remaining_days = (calendar.monthrange(year, month)[1] - selected_day.day)
+        remaining_target = max(target - produced, 0)
+        needed_daily = remaining_target / remaining_days if remaining_days > 0 else 0
+
+        cal = calendar.monthcalendar(year, month)
+        days_kr = ["일", "월", "화", "수", "목", "금", "토"]
+        html = '<div style="display:grid; grid-template-columns: 80px repeat(7, 1fr); gap:4px;">'
+        html += '<div></div>' + "".join([f"<div style='font-weight:bold; text-align:center;'>{d}</div>" for d in days_kr])
+
+        for w_i, week in enumerate(cal, start=1):
+            html += f"<div style='font-weight:bold;'>{w_i}주</div>"
+            for d in week:
+                if d == 0:
+                    html += "<div style='border:1px solid #ccc; min-height:80px; background:#f9f9f9;'></div>"
+                else:
+                    cell_date = datetime.date(year, month, d)
+                    cell_df = daily_actual[daily_actual["date"] == cell_date]
+                    if not cell_df.empty:
+                        qty = cell_df["daily_prod"].values[0]
+                        color = "#28a745" if cell_date <= selected_day else "#6c757d"
+                        html += f"<div style='border:1px solid #ccc; min-height:80px; padding:4px; color:{color}; font-weight:bold;'>{d}<br>{qty}</div>"
+                    else:
+                        html += f"<div style='border:1px solid #ccc; min-height:80px; padding:4px;'>{d}</div>"
+
+        html += "</div>"
+        return ui.HTML(html)
+
+
+    @render.text
+    @reactive.event(input.refresh_actual)
+    def daily_summary():
+        """누적 생산량 및 남은 목표량 요약"""
+        today = datetime.date.today()
+        year, month = today.year, today.month
+        selected_day = input.selected_day()
+        target = input.monthly_target_cur()
+
+        df_actual = train.copy()
+        df_actual["time"] = pd.to_datetime(df_actual["time"], errors="coerce")
+        df_actual["date"] = df_actual["time"].dt.date
+        daily_actual = (
+            df_actual.groupby("date")["count"]
+            .agg(["min", "max"])
+            .reset_index()
+        )
+        daily_actual["daily_prod"] = daily_actual["max"] - daily_actual["min"] + 1
+
+        produced = daily_actual.loc[daily_actual["date"] <= selected_day, "daily_prod"].sum()
+        remaining_days = (calendar.monthrange(year, month)[1] - selected_day.day)
+        remaining_target = max(target - produced, 0)
+        needed_daily = remaining_target / remaining_days if remaining_days > 0 else 0
+
+        return (
+            f"📈 {selected_day.strftime('%m월 %d일')}까지 누적 생산량: {produced:,}ea\n"
+            f"🎯 남은 목표: {remaining_target:,}ea / 남은 {remaining_days}일\n"
+            f"⚙️ 필요 일평균 생산량: {needed_daily:,.0f}ea"
+        )
+
 
     # ======== 📈 데이터 분석 탭 ========
    # --- 생산계획 탭 서버 로직 ---
@@ -1314,15 +1420,17 @@ def server(input, output, session):
     @output
     @render.ui
     def calendar_view():
-        df = plan_df.get()
-        if df.empty: return ui.p("시뮬레이션 실행 버튼을 눌러주세요.", style="text-align:center; color:grey;")
-        
+        df = plan_df.get()   # ✅ ← 여기 들여쓰기 맞춰줘야 함 (함수 안)
+        if df.empty:
+            return ui.p("시뮬레이션 실행 버튼을 눌러주세요.", style="text-align:center; color:grey;")
+
         year, month = int(input.year()), int(input.month())
         cal = calendar.monthcalendar(year, month)
         days_kr = ["일", "월", "화", "수", "목", "금", "토"]
+
         html = '<div style="display:grid; grid-template-columns: 80px repeat(7, 1fr); gap:4px;">'
         html += '<div></div>' + "".join([f"<div style='font-weight:bold; text-align:center;'>{d}</div>" for d in days_kr])
-        
+
         for w_i, week in enumerate(cal, start=1):
             html += f"<div style='font-weight:bold;'>{w_i}주</div>"
             for d in week:
@@ -1332,12 +1440,43 @@ def server(input, output, session):
                     cell_date = datetime.date(year, month, d)
                     cell_df = df[df["date"] == cell_date]
                     cell_html = ""
+
                     for _, r in cell_df.iterrows():
                         if r["plan_qty"] > 0:
-                             cell_html += f"<span style='color:{mold_colors.get(r['mold_code'], '#000')}; font-weight:bold;'>{r['mold_code']}: {r['plan_qty']}</span><br>"
+                            code = str(r["mold_code"])
+                            row = setting_df[setting_df["mold_code"] == code]
+                            if row.empty:
+                                tooltip_html = "<p>세팅값 없음</p>"
+                            else:
+                                settings = row.to_dict("records")[0]
+                                rows_html = "".join([
+                                    f"<tr><td>{k}</td><td>{v:.2f}</td></tr>"
+                                    for k, v in settings.items() if k != "mold_code"
+                                ])
+                                tooltip_html = f"""
+                                <table class='table table-sm table-bordered' style='font-size:11px; background:white; color:black;'>
+                                    <thead><tr><th>변수</th><th>값</th></tr></thead>
+                                    <tbody>{rows_html}</tbody>
+                                </table>
+                                """
+
+                            cell_html += str(
+                                ui.tooltip(
+                                    ui.span(
+                                        f"{code}: {r['plan_qty']}",
+                                        style=f"color:{mold_colors.get(code, '#000')}; font-weight:bold;"
+                                    ),
+                                    ui.HTML(tooltip_html),
+                                    placement="right"
+                                )
+                            ) + "<br>"
+
                     html += f"<div style='border:1px solid #ccc; min-height:80px; padding:4px; font-size:12px;'>{d}<br>{cell_html}</div>"
+
         html += "</div>"
         return ui.HTML(html)
+
+
 
     @output
     @render.plot
