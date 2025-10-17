@@ -683,11 +683,6 @@ def field_dashboard_ui():
             },
             ui.card(
                 ui.card_header("스트리밍 제어"),
-                ui.input_action_button("start_stream", "▶ 시작", class_="btn btn-success me-1"),
-                ui.input_action_button("pause_stream", "⏸ 일시정지", class_="btn btn-warning me-1"),
-                ui.input_action_button("reset_stream", "🔄 리셋", class_="btn btn-secondary"),
-                ui.hr(),
-                ui.output_ui("stream_status"),
             ),
             ui.card(
                 ui.card_header("🧩 주조 공정 실시간 상태"),
@@ -1008,8 +1003,8 @@ def main_page(selected_tab: str):
                             ui.card_header("공정 상태 관련"),
                             ui.layout_columns(
                                 ui.input_numeric("count", "일조 누적 제품 개수", value=int(df_predict["count"].mean())),
-                                ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
-                                ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
+                                # ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
+                                # ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
                                 ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=int(df_predict["speed_ratio"].mean())),
                                 ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=int(df_predict["pressure_speed_ratio"].mean())),
                                 make_select("working", "장비 가동 여부"),
@@ -1054,7 +1049,7 @@ def main_page(selected_tab: str):
                                 make_num_slider("upper_mold_temp3"),
                                 make_num_slider("lower_mold_temp1"),
                                 make_num_slider("lower_mold_temp2"),
-                                make_num_slider("lower_mold_temp3"),
+                                # make_num_slider("lower_mold_temp3"),
                                 make_num_slider("Coolant_temperature"),
                                 col_widths=[3,3,3,3]
                             )
