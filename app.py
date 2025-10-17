@@ -19,7 +19,7 @@ import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from scipy import stats
 # ======== 실시간 스트리밍 대시보드 (현장 메뉴) ========
-from shared import streaming_df, RealTimeStreamer
+from shared import streaming_df, RealTimeStreamer, KFStreamer
 import plotly.express as px
 import plotly.graph_objects as go
 from fpdf import FPDF
@@ -37,6 +37,8 @@ display_cols = [
 streamer = reactive.Value(RealTimeStreamer(streaming_df))
 current_data = reactive.Value(pd.DataFrame())
 is_streaming = reactive.Value(False)
+KF_PATH = pathlib.Path("./data/fin_test_kf.csv")
+kf_streamer = reactive.Value(KFStreamer(KF_PATH))
 
 # ===== 한글 변수명 매핑 =====
 VAR_LABELS = {
@@ -835,35 +837,25 @@ def main_page(selected_tab: str):
                     ui.output_ui("sensor_detail_modal")     # 클릭 시 뜨는 모달창
                 )
             ),
-
-
-
-
-
-
-
-
-
-            ui.nav_panel(
-                "실시간 관리도",
+            ui.nav_panel("실시간 관리도",
                 ui.card(
-                    ui.card_header("📉 실시간 SPC 관리도"),
+                    ui.card_header("📊 실시간 다변량 관리도 (Hotelling’s T²)"),
+
+                    # ✅ 상단 3개: 용융 / 충진 / 냉각
                     ui.layout_columns(
-                        ui.input_select(
-                            "spc_var",
-                            "📊 관리 대상 변수 선택",
-                            {
-                                "cast_pressure": "주입 압력",
-                                "biscuit_thickness": "비스킷 두께",
-                                "molten_temp": "용탕 온도"
-                            },
-                            selected="cast_pressure",
-                            width="250px"
-                        ),
+                        ui.card(ui.card_header("용융 단계"), ui.output_plot("mv_chart_melting")),
+                        ui.card(ui.card_header("충진 단계"), ui.output_plot("mv_chart_filling")),
+                        ui.card(ui.card_header("냉각 단계"), ui.output_plot("mv_chart_cooling")),
+                        col_widths=[4,4,4]
                     ),
-                    ui.navset_tab(
-                        ui.nav_panel("X-R 관리도", ui.output_plot("xr_chart_quality")),
-                        ui.nav_panel("P 관리도", ui.output_plot("p_chart_quality")),
+
+                    ui.br(),
+
+                    # ✅ 하단 2개: 생산 속도 / 제품 테스트
+                    ui.layout_columns(
+                        ui.card(ui.card_header("생산 속도"), ui.output_plot("mv_chart_speed")),
+                        ui.card(ui.card_header("제품 테스트"), ui.output_plot("mv_chart_quality")),
+                        col_widths=[6,6]
                     )
                 )
             ),
@@ -1547,49 +1539,138 @@ def server(input, output, session):
         return fig
     
     # ===== 품질 모니터링용 관리도 출력 =====
-    @output
-    @render.plot
-    @reactive.calc
-    def xr_chart_quality():
-        df = current_data.get()
-        if df is None or df.empty:
-            fig, ax = plt.subplots()
-            ax.axis("off")
-            ax.text(0.5, 0.5, "데이터 수신 대기 중...", ha="center", va="center")
-            return fig
+    # @output
+    # @render.plot
+    # @reactive.calc
+    # def xr_chart_quality():
+    #     df = current_data.get()
+    #     if df is None or df.empty:
+    #         fig, ax = plt.subplots()
+    #         ax.axis("off")
+    #         ax.text(0.5, 0.5, "데이터 수신 대기 중...", ha="center", va="center")
+    #         return fig
     
-        var = input.spc_var() or "cast_pressure"
-        if var not in df.columns:
-            fig, ax = plt.subplots()
-            ax.axis("off")
-            ax.text(0.5, 0.5, f"{var} 데이터 없음", ha="center", va="center")
-            return fig
+    #     var = input.spc_var() or "cast_pressure"
+    #     if var not in df.columns:
+    #         fig, ax = plt.subplots()
+    #         ax.axis("off")
+    #         ax.text(0.5, 0.5, f"{var} 데이터 없음", ha="center", va="center")
+    #         return fig
     
-        xbar, R, limits = calc_xr_chart(df, var=var)
-        fig = plot_xr_chart_matplotlib(xbar, R, limits)
+    #     xbar, R, limits = calc_xr_chart(df, var=var)
+    #     fig = plot_xr_chart_matplotlib(xbar, R, limits)
+    #     return fig
+
+
+    # @output
+    # @render.plot
+    # @reactive.calc
+    # def p_chart_quality():
+    #     df = current_data.get()
+    #     if df is None or df.empty:
+    #         fig, ax = plt.subplots()
+    #         ax.axis("off")
+    #         ax.text(0.5, 0.5, "데이터 수신 대기 중...", ha="center", va="center")
+    #         return fig
+
+    #     if "passorfail" not in df.columns:
+    #         fig, ax = plt.subplots()
+    #         ax.axis("off")
+    #         ax.text(0.5, 0.5, "passorfail 데이터 없음", ha="center", va="center")
+    #         return fig
+
+    #     p_bar, UCL, LCL = calc_p_chart(df, var="passorfail")
+    #     return plot_p_chart_matplotlib(p_bar, UCL, LCL)
+    
+    # ============================================================
+    # 🧭 다변량 관리도 (Hotelling’s T²) 계산 함수
+    # ============================================================
+    def calc_hotelling_t2(df, cols):
+        """Hotelling's T² 통계량 계산"""
+        df = df.dropna(subset=cols)
+        if len(df) < 5:
+            return None, None, None
+        X = df[cols].values
+        mean = np.mean(X, axis=0)
+        cov = np.cov(X, rowvar=False)
+
+        try:
+            inv_cov = np.linalg.inv(cov)
+        except np.linalg.LinAlgError:
+            inv_cov = np.linalg.pinv(cov)
+
+        T2 = np.array([(x - mean) @ inv_cov @ (x - mean).T for x in X])
+        n, p = len(df), len(cols)
+        from scipy.stats import f
+        UCL = p * (n - 1) * (n + 1) / (n * (n - p)) * f.ppf(0.99, p, n - p)
+        return df.index, T2, UCL
+
+
+    def plot_t2_chart(index, T2, UCL, title):
+        fig, ax = plt.subplots(figsize=(6, 3))
+        if T2 is None:
+            ax.text(0.5, 0.5, "데이터 부족", ha="center", va="center")
+            ax.axis("off")
+            return fig
+
+        ax.plot(index, T2, marker='o', color='steelblue', label='T²')
+        ax.axhline(UCL, color='r', linestyle='--', label='UCL(99%)')
+        ax.set_title(title)
+        ax.set_ylabel("T²")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
         return fig
-
-
+    
+    # ✅ 용융 단계
     @output
     @render.plot
-    @reactive.calc
-    def p_chart_quality():
-        df = current_data.get()
-        if df is None or df.empty:
-            fig, ax = plt.subplots()
-            ax.axis("off")
-            ax.text(0.5, 0.5, "데이터 수신 대기 중...", ha="center", va="center")
-            return fig
+    def mv_chart_melting():
+        df = current_data()
+        cols = ["molten_temp", "molten_volume"]
+        idx, T2, UCL = calc_hotelling_t2(df, cols)
+        return plot_t2_chart(idx, T2, UCL, "용융 단계")
 
-        if "passorfail" not in df.columns:
-            fig, ax = plt.subplots()
-            ax.axis("off")
-            ax.text(0.5, 0.5, "passorfail 데이터 없음", ha="center", va="center")
-            return fig
+    # ✅ 충진 단계
+    @output
+    @render.plot
+    def mv_chart_filling():
+        df = current_data()
+        cols = ["sleeve_temperature", "EMS_operation_time",
+                "low_section_speed", "high_section_speed", "cast_pressure"]
+        idx, T2, UCL = calc_hotelling_t2(df, cols)
+        return plot_t2_chart(idx, T2, UCL, "충진 단계")
 
-        p_bar, UCL, LCL = calc_p_chart(df, var="passorfail")
-        return plot_p_chart_matplotlib(p_bar, UCL, LCL)
+    # ✅ 냉각 단계
+    @output
+    @render.plot
+    def mv_chart_cooling():
+        df = current_data()
+        cols = [c for c in [
+            "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+            "lower_mold_temp1", "lower_mold_temp2", "lower_mold_temp3",
+            "Coolant_temperature"
+        ] if c in df.columns]
+        idx, T2, UCL = calc_hotelling_t2(df, cols)
+        return plot_t2_chart(idx, T2, UCL, "냉각 단계")
 
+    # ✅ 생산 속도
+    @output
+    @render.plot
+    def mv_chart_speed():
+        df = current_data()
+        cols = ["facility_operation_cycleTime", "production_cycletime"]
+        idx, T2, UCL = calc_hotelling_t2(df, cols)
+        return plot_t2_chart(idx, T2, UCL, "생산 속도")
+
+    # ✅ 제품 테스트
+    @output
+    @render.plot
+    def mv_chart_quality():
+        df = current_data()
+        cols = ["biscuit_thickness", "physical_strength"]
+        idx, T2, UCL = calc_hotelling_t2(df, cols)
+        return plot_t2_chart(idx, T2, UCL, "제품 테스트")
 
     @output
     @render.data_frame
@@ -1663,6 +1744,7 @@ def server(input, output, session):
     @reactive.event(input.reset_stream)
     async def _reset_stream():
         streamer().reset_stream()
+        kf_streamer().reset_stream()
         current_data.set(pd.DataFrame())
         is_streaming.set(False)
         reset_values = {col: 0.0 for col in display_cols}
@@ -1696,24 +1778,34 @@ def server(input, output, session):
     # 주기적 업데이트
     @reactive.effect
     async def _auto_update():
+        """2초마다 실시간 스트리밍 업데이트 (현장 + 품질 분리)"""
         if not is_streaming():
             return
 
         reactive.invalidate_later(2)
-        s = streamer()
+
+        # 현재 페이지 상태 확인
+        page = page_state()
+
+        # 📊 현장 대시보드
+        if page == "field":
+            s = streamer()
+        # 🧭 품질 모니터링 (칼만 필터 CSV 사용)
+        elif page == "quality":
+            s = kf_streamer()
+        else:
+            return
+
         next_batch = s.get_next_batch(1)
         if next_batch is not None:
             current_data.set(s.get_current_data())
-
             latest = next_batch.iloc[-1].to_dict()
-            # ✅ NaN → None 으로 바꿔서 JSON 직렬화 가능하게 함
-            clean_values = {}
-            for k, v in latest.items():
-                if isinstance(v, (int, float)):
-                    if pd.isna(v):
-                        clean_values[k] = 0.0   # 또는 None, 0.0 중 선택 가능
-                    else:
-                        clean_values[k] = float(v)
+
+            clean_values = {
+                k: (float(v) if pd.notna(v) else 0.0)
+                for k, v in latest.items()
+                if isinstance(v, (int, float))
+            }
             await session.send_custom_message("updateSensors", clean_values)
         else:
             is_streaming.set(False)
