@@ -841,33 +841,26 @@ def field_dashboard_ui():
                 ui.card_header(
                     ui.div(
                         {"style": "display:flex; justify-content:space-between; align-items:center;"},
-                        # 왼쪽: 제목
                         ui.span("🧭 주조 공정 실시간 상태", style="font-weight:700; font-size:16px;"),
-
-                        # 오른쪽: 범례
                         ui.div(
-                            {"style": "display:flex; gap:10px; align-items:center; font-size:13px;"},
-                            ui.div(
-                                {"style": "display:flex; align-items:center; gap:4px;"},
-                                ui.div({"style": "width:12px; height:12px; background:#00C853; border-radius:2px;"}),
+                            {"class": "legend-row"},
+                            ui.div({"class": "legend-box"},
+                                ui.div({"class": "legend-color", "style": "background:#00C853;"}),
                                 "정상"
                             ),
-                            ui.div(
-                                {"style": "display:flex; align-items:center; gap:4px;"},
-                                ui.div({"style": "width:12px; height:12px; background:#FFD600; border-radius:2px;"}),
+                            ui.div({"class": "legend-box"},
+                                ui.div({"class": "legend-color", "style": "background:#FFD600;"}),
                                 "주의"
                             ),
-                            ui.div(
-                                {"style": "display:flex; align-items:center; gap:4px;"},
-                                ui.div({"style": "width:12px; height:12px; background:#FB8C00; border-radius:2px;"}),
+                            ui.div({"class": "legend-box"},
+                                ui.div({"class": "legend-color", "style": "background:#FB8C00;"}),
                                 "경고"
                             ),
-                            ui.div(
-                                {"style": "display:flex; align-items:center; gap:4px;"},
-                                ui.div({"style": "width:12px; height:12px; background:#E53935; border-radius:2px;"}),
+                            ui.div({"class": "legend-box"},
+                                ui.div({"class": "legend-color", "style": "background:#E53935;"}),
                                 "이상"
-                            ),
-                        ),
+                            )
+                        )
                     )
                 ),
                 ui.output_ui("process_svg_inline"),
