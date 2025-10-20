@@ -388,39 +388,6 @@ train = pd.read_csv("./data/train_raw.csv")
 train["time"] = pd.to_datetime(train["time"], errors="coerce")
 train["day"] = train["time"].dt.date
 
-# ======== 생산 목표 비교용 데이터 추가 ========
-try:
-    actual_df = pd.read_csv("./data/fin_test.csv")
-    target_df = pd.read_csv("./data/daily_target_plan_v2.csv")
-    actual_df["date"] = pd.to_datetime(actual_df["date"], errors="coerce")
-    target_df["date"] = pd.to_datetime(target_df["date"], errors="coerce")
-
-    # 날짜별 합산
-    daily_actual = (
-        actual_df.groupby(["date"])["count"]
-        .sum()
-        .reset_index(name="actual_prod")
-    )
-    daily_target = (
-        target_df.groupby(["date"])["target_daily"]
-        .sum()
-        .reset_index(name="target_prod")
-    )
-
-    # 병합 및 누적 계산
-    merged = pd.merge(daily_target, daily_actual, on="date", how="left").fillna(0)
-    merged["cumulative_actual"] = merged["actual_prod"].cumsum()
-    merged["cumulative_target"] = merged["target_prod"].cumsum()
-    merged["achieve_rate(%)"] = (
-        merged["cumulative_actual"] / merged["cumulative_target"]
-    ) * 100
-
-    monthly_merged = merged.copy()
-    print("[✅ 생산목표 데이터 병합 완료]")
-except Exception as e:
-    print("⚠️ 생산목표 데이터 병합 실패:", e)
-    monthly_merged = pd.DataFrame()
-
 # 몰드코드별 요약
 mold_cycle = (
     train.groupby("mold_code")["facility_operation_cycleTime"]
