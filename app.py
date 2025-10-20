@@ -30,6 +30,8 @@ import datetime
 # ==========================================
 from scipy.stats import f
 
+stream_speed = reactive.Value(2.0)  # 기본 2초 주기
+
 def calc_baseline_ucl(train_df, cols):
     """Train 데이터 기반 UCL, mean, inv_cov 계산"""
     X = train_df[cols].dropna().values
@@ -758,15 +760,12 @@ def floating_stream_bar():
                 "z-index:1500; font-weight:bold; color:#5c4b3b;"
             )
         },
-        # 좌측: 제목
         ui.div("스트리밍 제어", style="font-weight:bold; font-size:15px;"),
-
-        # 상태 표시 (🔴/🟢)
         ui.output_ui("stream_status"),
 
-        # ✅ 스트리밍 시각 표시 (고정폭 + 동적 색상)
+        # 시간 표시 (고정폭)
         ui.div(
-            ui.output_ui("stream_time_display"),  # ✅ output_text → output_ui 로 변경
+            ui.output_ui("stream_time_display"),
             style=(
                 "font-size:14px; width:180px; text-align:center; white-space:nowrap;"
             ),
@@ -1709,11 +1708,13 @@ def server(input, output, session):
             # In a real app, you would now generate the file.
             return ui.div(ui.hr(), ui.p("보고서 생성이 완료되었습니다.", class_="alert alert-success"))
         return None
+    
     # ===== 실시간 스트리밍 로직 =====
     @output
     @render.ui
     def stream_status():
-        return ui.div("🟢 " if is_streaming() else "🔴 ")
+        color = "green" if is_streaming() else "gray"
+        return ui.span(f"{'🟢' if is_streaming() else '🔴'}", style=f"color:{color};")
 
     @output
     @render.plot
@@ -2103,43 +2104,62 @@ def server(input, output, session):
     @output
     @render.ui
     def stream_buttons():
-        """스트리밍 상태에 따라 버튼 표시 전환 (아이콘만, 따뜻한 톤으로 통일)"""
+        """스트리밍 상태에 따라 버튼 표시 전환 (Font Awesome 아이콘 + 가로 배속 표시)"""
         btn_base = (
-            "width:36px; height:36px; display:flex; align-items:center; justify-content:center;"
-            "border:none; border-radius:6px; font-size:16px; color:white;"
-            "box-shadow:0 2px 4px rgba(0,0,0,0.15);"
+            "min-width:32px; height:32px; display:flex; align-items:center; justify-content:center;"
+            "border:none; border-radius:6px; font-size:14px; color:white; font-weight:bold;"
+            "box-shadow:0 1px 3px rgba(0,0,0,0.15); padding:0 6px;"
+            "transition:all 0.2s ease;"
         )
 
-        if is_streaming():
-            # ▶ 스트리밍 중 → 일시정지 + 리셋
-            return ui.div(
-                {"style": "display:flex; gap:8px;"},
-                ui.input_action_button(
-                    "pause_stream",
-                    ui.HTML('<i class="fa-solid fa-pause"></i>'),
-                    style=btn_base + "background-color:#fbbf24;",  # 밝은 주황
+        # 현재 배속 표시
+        speed = stream_speed()
+        speed_map = {2.0: "1x", 1.0: "2x", 0.5: "4x", 0.1: "20x", 0.05: "40x"}
+        label = speed_map.get(speed, "1x")
+
+        # 색상 (스트리밍 중: 파랑 / 정지 시: 회색)
+        fast_color = "#60a5fa" if is_streaming() else "#9ca3af"
+
+        return ui.div(
+            {"style": "display:flex; gap:6px; align-items:center;"},
+            # ▶ / ⏸ 버튼
+            ui.input_action_button(
+                "pause_stream" if is_streaming() else "start_stream",
+                ui.HTML(
+                    '<i class="fa-solid fa-pause"></i>'
+                    if is_streaming()
+                    else '<i class="fa-solid fa-play"></i>'
                 ),
-                ui.input_action_button(
-                    "reset_stream",
-                    ui.HTML('<i class="fa-solid fa-rotate-right"></i>'),
-                    style=btn_base + "background-color:#d97706;",  # 연갈색
+                style=btn_base + (
+                    "background-color:#fbbf24;" if is_streaming() else "background-color:#f59e0b;"
                 ),
-            )
-        else:
-            # ⏹ 정지 상태 → 시작 + 리셋
-            return ui.div(
-                {"style": "display:flex; gap:8px;"},
-                ui.input_action_button(
-                    "start_stream",
-                    ui.HTML('<i class="fa-solid fa-play"></i>'),
-                    style=btn_base + "background-color:#f59e0b;",  # 살구빛 오렌지
+                title="재생/일시정지",
+            ),
+
+            # ✅ 빨리감기 버튼 (Font Awesome 아이콘 + 배속 가로 배치)
+            ui.input_action_button(
+                "fast_stream",
+                ui.HTML(
+                    f"<div style='display:flex; align-items:center; gap:3px;'>"
+                    f"<i class='fa-solid fa-forward'></i>"
+                    f"<span style='font-size:11px;'>{label}</span>"
+                    f"</div>"
                 ),
-                ui.input_action_button(
-                    "reset_stream",
-                    ui.HTML('<i class="fa-solid fa-rotate-right"></i>'),
-                    style=btn_base + "background-color:#d97706;",  # 연갈색
-                ),
-            )
+                style=btn_base + f"background-color:{fast_color}; "
+                                f"opacity:{1 if is_streaming() else 0.5}; "
+                                f"cursor:{'pointer' if is_streaming() else 'not-allowed'};",
+                disabled=not is_streaming(),
+                title="빨리감기",
+            ),
+
+            # 🔄 초기화 버튼
+            ui.input_action_button(
+                "reset_stream",
+                ui.HTML('<i class="fa-solid fa-rotate-right"></i>'),
+                style=btn_base + "background-color:#d97706;",
+                title="리셋",
+            ),
+        )
 
     # ---------- 버튼 동작 ----------
     @reactive.effect
@@ -2160,7 +2180,17 @@ def server(input, output, session):
         current_data.set(pd.DataFrame())
         is_streaming.set(False)
         reset_values = {col: 0.0 for col in display_cols}
+        stream_speed.set(2.0)   # ✅ 배속 기본값으로 초기화
         await session.send_custom_message("updateSensors", reset_values)
+
+    # 빨리감기 버튼 클릭 → 속도 순환 변경
+    @reactive.effect
+    @reactive.event(input.fast_stream)
+    def _fast_stream():
+        current = stream_speed()
+        # 단계별 속도 순환
+        next_speed = {2.0: 1.0, 1.0: 0.5, 0.5: 0.1, 0.1: 0.05, 0.05: 2.0}.get(current, 2.0)
+        stream_speed.set(next_speed)
 
     # === GIF 표시 제어 (스트리밍 상태 연동) ===
 
@@ -2199,7 +2229,7 @@ def server(input, output, session):
         if not is_streaming():
             return
 
-        reactive.invalidate_later(2)
+        reactive.invalidate_later(stream_speed())
 
         # 현재 페이지 상태 확인
         page = page_state()
@@ -2532,6 +2562,23 @@ def server(input, output, session):
 
         return ui.HTML(
             f"<span style='color:{color}; font-weight:bold;'>🕒 {time_str}</span>"
+        )
+    
+    @output
+    @render.ui
+    def stream_speed_badge():
+        speed = stream_speed()
+
+        # 배속 매핑
+        speed_map = {2.0: "1x", 1.0: "2x", 0.5: "4x", 0.1: "20x", 0.05: "40x"}
+        label = speed_map.get(speed, "1x")
+
+        # 색상: 속도에 따라 강조
+        color_map = {2.0: "#6b4f2a", 1.0: "#f59e0b", 0.5: "#f97316", 0.1: "#ef4444", 0.05: "#dc2626"}
+        bg_color = color_map.get(speed, "#6b4f2a")
+
+        return ui.HTML(
+            f"<span style='background:{bg_color}; color:white; padding:3px 10px; border-radius:10px; font-size:13px;'>⏩ {label}</span>"
         )
 
 # 🟢 TAB1. 끝
