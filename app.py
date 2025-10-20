@@ -185,10 +185,6 @@ df_predict = pd.read_csv("./data/train.csv")
 df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace([np.inf, -np.inf], np.nan)
 
 
-# 예측 탭용 (모델 input 그대로)
-df_predict = pd.read_csv("./data/train.csv")
-df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace([np.inf, -np.inf], np.nan)
-
 # df_predict = df_predict[
 #     (df_predict["low_section_speed"] != 65535) &
 #     (df_predict["lower_mold_temp3"] != 65503) &
@@ -872,13 +868,7 @@ def main_page(selected_tab: str):
         # 🧭 품질 모니터링 (예측 시뮬레이션 UI 포함)
         "quality": ui.navset_tab(
             ui.nav_panel("원인 분석",
-                ui.card(
-                    ui.card_header("불량 및 공정 에러 발생 조건", style="text-align:center;"),
-                    ui.output_plot("local_factor_plot", click=True),   # 클릭 가능한 그래프
-                    ui.hr(),
-                    ui.output_ui("local_factor_desc"),      # 텍스트 설명
-                    ui.output_ui("sensor_detail_modal")     # 클릭 시 뜨는 모달창
-                ),
+
                 # ──────────────── 2행: 실시간 데이터 표 ────────────────
                 ui.card(
                     ui.card_header("📊 실시간 데이터"),
@@ -894,6 +884,16 @@ def main_page(selected_tab: str):
                     ),
                     style="width:100%;"
                 ),
+
+                ui.card(
+                    ui.card_header("불량 및 공정 에러 발생 조건", style="text-align:center;"),
+                    ui.output_plot("local_factor_plot", click=True),   # 클릭 가능한 그래프
+                    ui.hr(),
+                    ui.output_ui("local_factor_desc"),      # 텍스트 설명
+                    ui.output_ui("sensor_detail_modal")     # 클릭 시 뜨는 모달창
+                ),
+
+
             ),
             ui.nav_panel("실시간 관리도",
                 ui.card(
@@ -2085,20 +2085,9 @@ def server(input, output, session):
             return pd.DataFrame({"메시지": ["데이터 수집 중입니다. 잠시만 기다려주세요."]})
 
 
-    @output
-    @render.data_frame
-    def recent_data_table():
-        df = current_data()
-        if df is None or df.empty:
-            return pd.DataFrame({"데이터": ["현재 수신된 데이터가 없습니다."]})
 
-        df = df.copy().round(2).fillna("-")
 
-        # ✅ 컬럼명을 한글로 매핑
-        inv_label_map = label_map  # 그대로 사용해도 됨
-        df.rename(columns=inv_label_map, inplace=True)
 
-        return df.reset_index(drop=True)
 
     # ---------- 버튼 렌더링 ----------
     @output
@@ -2590,9 +2579,79 @@ def server(input, output, session):
 # 🟢 TAB2. 품질
 # ============================================================
 
+    selected_row = reactive.Value(None)
+
     last_proba = reactive.value(None)
     loading = reactive.value(False)
     local_factors = reactive.value(None)
+
+
+
+    # @output
+    # @render.data_frame
+    # def recent_data_table():
+    #     df = current_data()
+    #     if df is None or df.empty:
+    #         return pd.DataFrame({"데이터": ["현재 수신된 데이터가 없습니다."]})
+
+    #     df = df.copy().round(2).fillna("-")
+
+    #     # ✅ 컬럼명을 한글로 매핑
+    #     inv_label_map = label_map  # 그대로 사용해도 됨
+    #     df.rename(columns=inv_label_map, inplace=True)
+
+    #     return df.reset_index(drop=True)
+
+
+    @output
+    @render.data_frame
+    def recent_data_table():
+        df = current_data()
+        if df is None or df.empty:
+            return pd.DataFrame({"알림": ["현재 수신된 데이터가 없습니다."]})
+
+        data = df.copy()
+
+        # 1) 3시그마 이상치 행 찾기
+        numeric_cols = data.select_dtypes(include="number").columns.tolist()
+        if numeric_cols:
+            means = data[numeric_cols].mean()
+            stds = data[numeric_cols].std().replace(0, np.nan)
+            z = (data[numeric_cols] - means) / stds
+            mask_3sigma = (z.abs() > 3).any(axis=1)
+        else:
+            mask_3sigma = pd.Series(False, index=data.index)
+
+        # 2) 불량 행(passorfail==1) 찾기
+        if "passorfail" in data.columns:
+            mask_fail = data["passorfail"] == 1
+        else:
+            mask_fail = pd.Series(False, index=data.index)
+
+        # 3) 두 조건 중 하나라도 맞는 행만 필터
+        flagged = data[mask_3sigma | mask_fail].copy()
+
+        # 4) 없으면 “이상 행 없음” 표시(표는 1행 안내)
+        if flagged.empty:
+            return pd.DataFrame({"알림": ["현재 3σ 이상치나 불량 행이 없습니다."]})
+
+        # 5) 보기 좋게 정리
+        #    - 최근 것부터 최대 200행
+        flagged = flagged.tail(200).round(2)
+
+        # 6) 한글 컬럼명으로 매핑(네가 선언한 label_map 재사용)
+        #    label_map에 없는 건 원래 이름 유지
+        def to_kor(col):
+            return label_map.get(col, col)
+        flagged.rename(columns={c: to_kor(c) for c in flagged.columns}, inplace=True)
+
+        # 7) 자주 보는 컬럼 앞으로 배치
+        prefer = [to_kor(c) for c in ["real_time", "passorfail"] if c in df.columns]
+        other_cols = [c for c in flagged.columns if c not in prefer]
+        flagged = flagged[prefer + other_cols] if prefer else flagged
+
+        return flagged.reset_index(drop=True)
+
 
     @reactive.effect
     @reactive.event(input.predict_btn)
@@ -3197,9 +3256,139 @@ def server(input, output, session):
 
 
 
+    ##### 실시간 이상 데이터 테이블 (3시그마 or 불량만 강조 표시, 클릭 시 조건 카드 열림)
+    @output
+    @render.ui
+    def realtime_table():
+        df = current_data()
+        if df is None or df.empty:
+            return ui.p("⚪ 실시간 데이터 수신 대기 중...", style="color:gray;")
+
+        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        if not numeric_cols:
+            return ui.p("데이터에 수치형 센서가 없습니다.")
+
+        mean_std = df[numeric_cols].describe().T[["mean", "std"]]
+        latest = df.iloc[-1]
+        z_scores = (latest - mean_std["mean"]) / mean_std["std"]
+        anomaly_cols = z_scores[abs(z_scores) > 3].index.tolist()
+
+        fail_df = df[df["passorfail"].astype(str).str.lower().isin(["fail", "불량", "ng"])]
+
+        if anomaly_cols:
+            anomaly_df = df.tail(10).copy()
+            anomaly_df = anomaly_df[["timestamp"] + anomaly_cols]
+            anomaly_df["이상항목"] = ", ".join(anomaly_cols)
+        else:
+            anomaly_df = pd.DataFrame(columns=["timestamp", "이상항목"])
+
+        merged = pd.concat([fail_df.tail(10), anomaly_df], axis=0)
+        merged = merged.tail(10).fillna("")
+        merged.reset_index(drop=True, inplace=True)
+
+        if merged.empty:
+            return ui.p("✅ 현재 이상 조건이 없습니다.", style="color:green;")
+
+        # ✅ 행 클릭 시 selected_row로 전달 (그래프 고정용)
+        html_rows = ""
+        for i, row in merged.iterrows():
+            is_fail = str(row.get("passorfail", "")).lower() in ["fail", "불량", "ng"]
+            row_color = "#ffe6e6" if is_fail else "#ffffff"
+            html_rows += (
+                f"<tr style='background:{row_color}; cursor:pointer;' "
+                f"onclick=\"Shiny.setInputValue('selected_row', {i}, {{priority: 'event'}});\">"
+            )
+            for val in row.values:
+                html_rows += f"<td style='padding:4px 8px; border-bottom:1px solid #ddd;'>{val}</td>"
+            html_rows += "</tr>"
+
+        html_table = f"""
+        <div style="max-height:300px; overflow:auto; border:1px solid #ccc; border-radius:8px;">
+            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead style="background:#f6f6f6;">
+                    <tr>{''.join(f'<th style="padding:6px 8px; border-bottom:2px solid #999;">{col}</th>' for col in merged.columns)}</tr>
+                </thead>
+                <tbody>{html_rows}</tbody>
+            </table>
+        </div>
+        """
+        return ui.HTML(html_table)
+
+
+    @reactive.effect
+    @reactive.event(input.selected_row)
+    def _show_snapshot():
+        idx = input.selected_row()
+        if idx is None:
+            return
+
+        df = current_data()
+        if df is None or df.empty:
+            return
+
+        # ✅ 클릭된 시점 데이터 스냅샷 저장
+        snapshot = df.iloc[:idx + 1].copy()
+        snapshot_file = "/tmp/snapshot.csv"
+        snapshot.to_csv(snapshot_file, index=False)
+        selected_row.set(idx)
+
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.card(
+                        ui.card_header(
+                            "⚙ 선택된 시점의 공정 상태",
+                            style="text-align:center; font-size:20px; font-weight:bold; color:#333;"
+                        ),
+                        ui.output_plot("local_factor_plot"),
+                        ui.hr(),
+                        ui.output_ui("local_factor_desc"),
+                        ui.input_action_button(
+                            "resume_realtime", "🔄 실시간 보기로 돌아가기",
+                            class_="btn btn-outline-primary", style="margin-top:10px;"
+                        )
+                    )
+                ),
+                title="📋 상세 보기 (고정)",
+                size="l",
+                easy_close=True
+            )
+        )
 
 
 
+    @reactive.effect
+    @reactive.event(input.selected_row)
+    def _show_condition_card():
+        idx = input.selected_row()
+        if idx is None:
+            return
+
+        # 클릭 시 '불량 및 공정 에러 발생 조건' 카드 모달로 표시
+        ui.modal_show(
+            ui.modal(
+                ui.card(
+                    ui.card_header(
+                        "⚙ 불량 및 공정 에러 발생 조건",
+                        style="text-align:center; font-size:20px; font-weight:bold; color:#333;"
+                    ),
+                    ui.output_plot("local_factor_plot"),
+                    ui.hr(),
+                    ui.output_ui("local_factor_desc"),
+                    easy_close=True,
+                ),
+                title="📋 상세 조건 보기",
+                size="xl",
+                easy_close=True
+            )
+        )
+
+
+    @reactive.effect
+    @reactive.event(input.resume_realtime)
+    def _resume_realtime():
+        selected_row.set(None)
+        ui.modal_remove()
 
 
 
