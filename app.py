@@ -540,82 +540,165 @@ months = list(range(1, 13))
 
 # ======== 전역 HEAD (favicon, CSS 등) ========
 global_head = ui.head_content(
+    # =====================================================
+    # 🧩 공통 리소스 연결
+    # =====================================================
     ui.tags.link(rel="icon", type="image/x-icon", href="favicon.ico"),
-    ui.tags.link(rel="stylesheet", href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"),
-    ui.tags.link(rel="stylesheet", type="text/css", href="custom.css"),
+    ui.tags.link(
+        rel="stylesheet",
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    ),
+    ui.tags.link(
+        rel="stylesheet",
+        type="text/css",
+        href="custom.css"
+    ),
     ui.tags.title("주조 공정 불량 예측 대시보드"),
-    ui.tags.script("""
-      Shiny.addCustomMessageHandler("updateSensors", function(values) {
-        const units = {
-          temp: "°C", Temp: "°C",
-          pressure: "bar", Pressure: "bar",
-          speed: "cm/s", Speed: "cm/s",
-          volume: "cc", thickness: "mm",
-          strength: "MPa", Strength: "MPa",
-          cycle: "sec", time: "s"
-        };
 
+    # =====================================================
+    # 📜 주요 클라이언트 스크립트 (6시그마, 센서 업데이트, 리셋)
+    # =====================================================
+    ui.tags.script("""
+        // =====================================================
+        // 📘 6시그마 기준 로드
+        // =====================================================
+        let THRESHOLDS = {};
+
+        fetch("sixsigma_thresholds_extended.json?t=" + Date.now())
+            .then(res => {
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return res.json();
+            })
+            .then(data => {
+                THRESHOLDS = data;
+                console.log(
+                    "✅ 6시그마 기준 로드 완료:",
+                    Object.keys(THRESHOLDS).length, "개 변수"
+                );
+            })
+            .catch(err =>
+                console.error("⚠️ sixsigma_thresholds_extended.json 로드 실패:", err)
+            );
+
+        // =====================================================
+        // ⚙️ 단위 판정 함수 (upper/lower_mold_temp 포함)
+        // =====================================================
         function unitFor(key) {
-          const k = key.toLowerCase();
-          if (k.includes("temp")) return " °C";
-          if (k.includes("pressure")) return " bar";
-          if (k.includes("speed")) return " cm/s";
-          if (k.includes("volume")) return " cc";
-          if (k.includes("thickness")) return " mm";
-          if (k.includes("strength")) return " MPa";
-          if (k.includes("cycle") || k.includes("time")) return " s";
-          return "";
+            const k = key.toLowerCase();
+
+            // ✅ 모든 형태의 온도 변수 인식
+            if (k.includes("temp")) return " °C";
+
+            // 🔹 나머지 단위
+            if (k.includes("pressure")) return " bar";
+            if (k.includes("speed")) return " cm/s";
+            if (k.includes("volume")) return " cc";
+            if (k.includes("thickness")) return " mm";
+            if (k.includes("strength")) return " MPa";
+            if (k.includes("cycle") || k.includes("time")) return " s";
+            return "";
         }
 
-        function colorFor(key, val) {
-          const k = key.toLowerCase();
-          if (k.includes("temp")) {
-            const c = Math.min(255, Math.max(0, Math.round(val*1.5)));
-            return `rgb(${c},50,50)`;
-          }
-          if (k.includes("pressure")) {
-            const c = Math.min(255, Math.max(0, Math.round(val*8)));
-            return `rgb(50,${c},80)`;
-          }
-          if (k.includes("speed")) {
-            const c = Math.min(255, Math.max(0, Math.round(val*6)));
-            return `rgb(40,100,${c})`;
-          }
-          if (k.includes("strength")) {
-            const c = Math.min(255, Math.max(0, Math.round(val*5)));
-            return `rgb(${120+c/4},${80+c/5},${150+c/2})`;
-          }
-          return "#111827";
+        // =====================================================
+        // 🎨 σ 단계별 색상 계산 (금형코드 예외: 검정색)
+        // =====================================================
+        function colorBySigmaLevel(key, val) {
+            const k = key.toLowerCase();
+
+            // 🎯 금형코드는 항상 검정
+            if (k.includes("mold_code")) return "#111827";
+
+            let info = THRESHOLDS[key];
+            if (!info) {
+                const matchKey = Object.keys(THRESHOLDS)
+                    .find(thKey => thKey.toLowerCase() === k);
+                if (!matchKey) {
+                    // 기준이 없어도 초록색으로 처리하고 이후 텍스트 갱신은 계속 진행
+                    return "#00C853";
+                }
+                info = THRESHOLDS[matchKey];
+            }
+
+            const mu = info.mu;
+            const sigma = info.sigma;
+            if (!sigma || sigma === 0) return "#00C853";
+
+            const diff = Math.abs(val - mu);
+
+            if (diff <= 1 * sigma) return "#00C853"; // ✅ 초록 (정상)
+            if (diff <= 2 * sigma) return "#FFD600"; // ⚠️ 노랑 (1~2σ)
+            if (diff <= 3 * sigma) return "#FB8C00"; // 🟠 주황 (2~3σ)
+            return "#E53935";                         // 🔴 빨강 (3σ 이상)
         }
 
-        for (const [key, val] of Object.entries(values)) {
-          if (typeof val !== "number" || isNaN(val)) continue;
+        // =====================================================
+        // 🔹 실시간 센서 업데이트 핸들러
+        // =====================================================
+        Shiny.addCustomMessageHandler("updateSensors", function(values) {
+            for (const [key, val] of Object.entries(values)) {
+                if (typeof val !== "number" || isNaN(val) || val === 0) continue;
 
-          // ✅ 값 노드를 정확히 찾음: #var-<key> .value
-          const valueNode = document.querySelector(`#var-${key} .value`);
-          if (!valueNode) {
-            console.log(`⚠️ '#var-${key} .value' 노드를 찾을 수 없습니다.`);
-            continue;
-          }
+                // === ① 값 노드 찾기 ===
+                const valueNode = document.querySelector(`#var-${key} .value`);
+                if (!valueNode) continue;
 
-          const txt = `${val.toFixed(1)}${unitFor(key)}`;
-          valueNode.textContent = txt;
+                // === ② 색상 계산 (σ 단계별) ===
+                const color = colorBySigmaLevel(key, val);
 
-          // 색상 반영
-          valueNode.setAttribute("fill", colorFor(key, val));
+                // === ③ 텍스트 내용 업데이트 ===
+                const isMold = key.toLowerCase().includes("mold_code");
+                const txt = isMold
+                    ? `${Math.round(val)}`
+                    : `${val.toFixed(1)}${unitFor(key)}`;
+                valueNode.textContent = txt;
+                valueNode.setAttribute("fill", color);
 
-          // 갱신 애니메이션
-          valueNode.animate([{opacity:.3},{opacity:1}], {duration:350, iterations:1});
-        }
-      });
+                // === ④ 배경 테두리 색상 업데이트 ===
+                const rectNode = document.querySelector(`#var-${key} rect`);
+                if (rectNode) {
+                    const strokeColor = color === "#00C853" ? "#ddd" : color; // 정상일땐 회색 유지
+                    rectNode.setAttribute("stroke", strokeColor);
+                    rectNode.setAttribute(
+                        "stroke-width",
+                        color === "#00C853" ? "0.5" : "1.5"
+                    );
+                }
+            }
+        });
+
+        // =====================================================
+        // 🔹 모든 센서 초기화 핸들러 (값 '—'로 변경)
+        // =====================================================
+        Shiny.addCustomMessageHandler("resetSensors", function(message) {
+            console.log("♻️ 센서 표시 초기화 (값 '—')");
+
+            // 모든 센서의 값(tspan.value)을 '—' 로 바꾸고 색상을 검정으로
+            document.querySelectorAll("tspan.value").forEach(node => {
+                node.textContent = "—";
+                node.setAttribute("fill", "#111827"); // 검정색
+                const parent = node.closest("text");
+                if (parent) parent.setAttribute("fill", "#111827");
+            });
+
+            // ✅ 테두리도 회색으로 복구
+            document.querySelectorAll("g[id^='var-'] rect").forEach(rect => {
+                rect.setAttribute("stroke", "#ddd");
+                rect.setAttribute("stroke-width", "0.5");
+            });
+        });
     """),
+
+    # =====================================================
+    # 🖼️ GIF 업데이트 스크립트
+    # =====================================================
     ui.tags.script("""
-    Shiny.addCustomMessageHandler("updateGif", function(data) {
-        const img = document.getElementById("process_gif");
-        if (!img) return;
-        // ⚡ 캐시 무효화를 위해 timestamp 붙임
-        img.src = data.src + "?t=" + new Date().getTime();
-    });
+        Shiny.addCustomMessageHandler("updateGif", function(data) {
+            const img = document.getElementById("process_gif");
+            if (!img) return;
+
+            // ⚡ 캐시 무효화를 위해 timestamp 붙임
+            img.src = data.src + "?t=" + new Date().getTime();
+        });
     """),
 )
 
@@ -2201,8 +2284,13 @@ def server(input, output, session):
         kf_streamer().reset_stream()
         current_data.set(pd.DataFrame())
         is_streaming.set(False)
-        reset_values = {col: 0.0 for col in display_cols}
         stream_speed.set(2.0)   # ✅ 배속 기본값으로 초기화
+
+        # ✅ 1️⃣ 먼저 표시 리셋
+        await session.send_custom_message("resetSensors", True)
+
+        # ✅ 2️⃣ 내부 데이터 상태 리셋
+        reset_values = {col: 0.0 for col in display_cols}
         await session.send_custom_message("updateSensors", reset_values)
 
     # 빨리감기 버튼 클릭 → 속도 순환 변경

@@ -1,0 +1,128 @@
+{
+  "count": {
+    "mu": 148.3946,
+    "sigma": 87.8157,
+    "min": -115.0525,
+    "max": 411.8417
+  },
+  "molten_temp": {
+    "mu": 716.0817,
+    "sigma": 57.5474,
+    "min": 543.4396,
+    "max": 888.7239
+  },
+  "facility_operation_cycleTime": {
+    "mu": 121.3051,
+    "sigma": 12.2502,
+    "min": 84.5546,
+    "max": 158.0556
+  },
+  "production_cycletime": {
+    "mu": 122.5138,
+    "sigma": 14.1671,
+    "min": 80.0126,
+    "max": 165.015
+  },
+  "low_section_speed": {
+    "mu": 110.3588,
+    "sigma": 241.3775,
+    "min": -613.7736,
+    "max": 834.4912
+  },
+  "high_section_speed": {
+    "mu": 112.9383,
+    "sigma": 11.7827,
+    "min": 77.5901,
+    "max": 148.2865
+  },
+  "molten_volume": {
+    "mu": 449.9597,
+    "sigma": 944.3359,
+    "min": -2383.0481,
+    "max": 3282.9675
+  },
+  "cast_pressure": {
+    "mu": 323.9754,
+    "sigma": 27.6685,
+    "min": 240.9698,
+    "max": 406.981
+  },
+  "biscuit_thickness": {
+    "mu": 50.6849,
+    "sigma": 18.2208,
+    "min": -3.9774,
+    "max": 105.3472
+  },
+  "upper_mold_temp1": {
+    "mu": 182.7138,
+    "sigma": 47.2729,
+    "min": 40.895,
+    "max": 324.5326
+  },
+  "upper_mold_temp2": {
+    "mu": 161.8235,
+    "sigma": 30.6117,
+    "min": 69.9884,
+    "max": 253.6585
+  },
+  "upper_mold_temp3": {
+    "mu": 1284.0304,
+    "sigma": 436.898,
+    "min": -26.6636,
+    "max": 2594.7244
+  },
+  "lower_mold_temp1": {
+    "mu": 199.8273,
+    "sigma": 54.746,
+    "min": 35.5895,
+    "max": 364.0652
+  },
+  "lower_mold_temp2": {
+    "mu": 194.1397,
+    "sigma": 44.0775,
+    "min": 61.9071,
+    "max": 326.3722
+  },
+  "sleeve_temperature": {
+    "mu": 445.1993,
+    "sigma": 100.9475,
+    "min": 142.3568,
+    "max": 748.0418
+  },
+  "physical_strength": {
+    "mu": 700.4009,
+    "sigma": 417.4496,
+    "min": -551.9479,
+    "max": 1952.7497
+  },
+  "Coolant_temperature": {
+    "mu": 32.5218,
+    "sigma": 15.9081,
+    "min": -15.2026,
+    "max": 80.2462
+  },
+  "EMS_operation_time": {
+    "mu": 19.9712,
+    "sigma": 6.73,
+    "min": -0.2188,
+    "max": 40.1612
+  },
+  "passorfail": {
+    "mu": 0.0445,
+    "sigma": 0.2063,
+    "min": -0.5744,
+    "max": 0.6635
+  },
+  "mold_code": {
+    "mu": 8680.6201,
+    "sigma": 194.2481,
+    "min": 8097.8759,
+    "max": 9263.3642
+  },
+  "speed_ratio": {
+    "mu": 0.9803,
+    "sigma": 2.2765,
+    "min": -5.8492,
+    "max": 7.8097
+  }
+}
