@@ -107,7 +107,7 @@ VAR_LABELS = {
 VAR_POSITIONS = {
     # 용융부
     "molten_temp": (735, 250),
-    "heating_furnace": (735, 450),
+    # "heating_furnace": (735, 450),
 
     # 슬리브 / 주입
     "sleeve_temperature": (510, 325),
