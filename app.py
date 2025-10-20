@@ -721,8 +721,18 @@ def floating_stream_bar():
         },
         # 좌측: 제목
         ui.div("스트리밍 제어", style="font-weight:bold; font-size:15px;"),
-        # 상태 표시
+
+        # 상태 표시 (🔴/🟢)
         ui.output_ui("stream_status"),
+
+        # ✅ 스트리밍 시각 표시 (고정폭 + 동적 색상)
+        ui.div(
+            ui.output_ui("stream_time_display"),  # ✅ output_text → output_ui 로 변경
+            style=(
+                "font-size:14px; width:180px; text-align:center; white-space:nowrap;"
+            ),
+        ),
+
         # 버튼 그룹
         ui.div(
             {"style": "display:flex; gap:8px;"},
@@ -2433,6 +2443,24 @@ def server(input, output, session):
             ui.p(f"데이터 시각: {latest['real_time']}", style="color:#777; font-size:14px; margin-top:6px;"),
         )
 
+    @output
+    @render.ui
+    def stream_time_display():
+        df = current_data()
+        if df is None or df.empty:
+            time_str = "-------- --:--:--"
+        else:
+            latest_time = pd.to_datetime(df["real_time"].iloc[-1], errors="coerce")
+            if pd.isna(latest_time):
+                time_str = "-------- --:--:--"
+            else:
+                time_str = f"{latest_time:%Y-%m-%d %H:%M:%S}"
+
+        color = "#16a34a" if is_streaming() else "#6b4f2a"
+
+        return ui.HTML(
+            f"<span style='color:{color}; font-weight:bold;'>🕒 {time_str}</span>"
+        )
 
 # 🟢 TAB1. 끝
 # ============================================================
