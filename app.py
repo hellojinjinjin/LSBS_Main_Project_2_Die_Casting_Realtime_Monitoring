@@ -849,22 +849,68 @@ def main_page(selected_tab: str):
             ),
             ui.nav_panel("실시간 관리도",
                 ui.card(
-                    ui.card_header("📊 실시간 다변량 관리도 (Hotelling’s T²)"),
+                    ui.card_header(
+                        "📊 실시간 다변량 관리도 (Hotelling’s T²)"),
 
-                    # ✅ 상단 3개: 용융 / 충진 / 냉각
+                    # 상단 3개
                     ui.layout_columns(
-                        ui.card(ui.card_header("용융 단계"), ui.output_plot("mv_chart_melting")),
-                        ui.card(ui.card_header("충진 단계"), ui.output_plot("mv_chart_filling")),
-                        ui.card(ui.card_header("냉각 단계"), ui.output_plot("mv_chart_cooling")),
+                        ui.card(
+                            ui.output_plot("mv_chart_melting"),
+                            ui.div(
+                                ui.output_table("mv_log_melting"),
+                                style=(
+                                    "max-height:200px; overflow-y:auto; overflow-x:auto; "
+                                    "white-space:nowrap; border-top:1px solid #ccc;"
+                                )
+                            ),
+                        ),
+                        ui.card(
+                            ui.output_plot("mv_chart_filling"),
+                            ui.div(
+                                ui.output_table("mv_log_filling"),
+                                style=(
+                                    "max-height:200px; overflow-y:auto; overflow-x:auto; "
+                                    "white-space:nowrap; border-top:1px solid #ccc;"
+                                )
+                            ),
+                        ),
+                        ui.card(
+                            ui.output_plot("mv_chart_cooling"),
+                            ui.div(
+                                ui.output_table("mv_log_cooling"),
+                                style=(
+                                    "max-height:200px; overflow-y:auto; overflow-x:auto; "
+                                    "white-space:nowrap; border-top:1px solid #ccc;"
+                                )
+                            ),
+                        ),
                         col_widths=[4,4,4]
                     ),
 
                     ui.br(),
 
-                    # ✅ 하단 2개: 생산 속도 / 제품 테스트
+                    # 하단 2개
                     ui.layout_columns(
-                        ui.card(ui.card_header("생산 속도"), ui.output_plot("mv_chart_speed")),
-                        ui.card(ui.card_header("제품 테스트"), ui.output_plot("mv_chart_quality")),
+                        ui.card(
+                            ui.output_plot("mv_chart_speed"),
+                            ui.div(
+                                ui.output_table("mv_log_speed"),
+                                style=(
+                                    "max-height:200px; overflow-y:auto; overflow-x:auto; "
+                                    "white-space:nowrap; border-top:1px solid #ccc;"
+                                )
+                            ),
+                        ),
+                        ui.card(
+                            ui.output_plot("mv_chart_quality"),
+                            ui.div(
+                                ui.output_table("mv_log_quality"),
+                                style=(
+                                    "max-height:200px; overflow-y:auto; overflow-x:auto; "
+                                    "white-space:nowrap; border-top:1px solid #ccc;"
+                                )
+                            ),
+                        ),
                         col_widths=[6,6]
                     )
                 )
@@ -1682,80 +1728,279 @@ def server(input, output, session):
         return df.index, T2, UCL
 
 
+    # ───────────────────────────────
+    # 공통 함수: 관리도 그리기
+    # ───────────────────────────────
     def plot_t2_chart(index, T2, UCL, title):
+        import matplotlib.pyplot as plt
         fig, ax = plt.subplots(figsize=(6, 3))
         if T2 is None or len(T2) == 0:
             ax.text(0.5, 0.5, "데이터 부족", ha="center", va="center")
             ax.axis("off")
             return fig
-    
-        # 🔹 1️⃣ 데이터 선과 기준선 먼저 그림
+
+        # 데이터 선
         ax.plot(index, T2, marker="o", color="steelblue", label="T²", alpha=0.8)
         ax.axhline(UCL, color="red", linestyle="--", label="UCL(99%)")
-    
-        # 🔹 2️⃣ y축 한계 계산 후 UCL 위쪽 배경 영역 칠하기
-        ax.figure.canvas.draw()  # 축 한계 계산을 위해 필요
+
+        # y축 범위 반영 후 UCL 이상 배경 붉게 표시
+        ax.figure.canvas.draw()
         y_min, y_max = ax.get_ylim()
         ax.axhspan(UCL, y_max, color="lightcoral", alpha=0.25, zorder=0)
-    
-        # 🔹 3️⃣ 스타일
+
         ax.set_title(title)
         ax.set_ylabel("T²")
         ax.legend()
         ax.grid(True, alpha=0.3)
         plt.tight_layout()
-    
+        return fig
+
+
+    # ───────────────────────────────
+    # 공통 함수: 로그 데이터프레임 생성
+    # ───────────────────────────────
+    def make_overlog(df, cols):
+        idx, T2, UCL = calc_hotelling_t2(df, cols)
+        over_mask = T2 > UCL
+        over_data = df.loc[over_mask, cols].copy()
+        over_data["T2"] = T2[over_mask]
+
+        if over_data.empty:
+            return pd.DataFrame({"메시지": ["모든 데이터가 UCL 이하입니다."]})
+        else:
+            over_data = over_data.reset_index()
+
+            # 🔹 시간 컬럼 추가
+            if "registration_time" in df.columns:
+                over_data["시간"] = df.loc[over_mask, "registration_time"].values
+            elif "datetime" in df.columns:
+                over_data["시간"] = df.loc[over_mask, "datetime"].values
+
+            # 🔹 한글 컬럼명 매핑 (공정별 전체 반영)
+            col_name_map = {
+                "T2": "T²",
+                # 용융 단계
+                "molten_temp": "용융 온도",
+                "molten_volume": "주입한 금속 양",
+
+                # 충진 단계
+                "sleeve_temperature": "주입 관 온도",
+                "EMS_operation_time": "전자 교반(EMS) 가동 시간",
+                "low_section_speed": "하위 구간 주입 속도",
+                "high_section_speed": "상위 구간 주입 속도",
+                "cast_pressure": "주입 압력",
+
+                # 냉각 단계
+                "upper_mold_temp1": "상부1 금형 온도",
+                "upper_mold_temp2": "상부2 금형 온도",
+                "upper_mold_temp3": "상부3 금형 온도",
+                "lower_mold_temp1": "하부1 금형 온도",
+                "lower_mold_temp2": "하부2 금형 온도",
+                "lower_mold_temp3": "하부3 금형 온도",
+                "Coolant_temperature": "냉각수 온도",
+
+                # 생산 속도
+                "facility_operation_cycleTime": "장비 전체 사이클 시간",
+                "production_cycletime": "실제 생산 사이클 시간",
+
+                # 제품 테스트
+                "biscuit_thickness": "주조물 두께",
+                "physical_strength": "제품 강도",
+
+                # 공통
+                "시간": "시간",
+            }
+
+            # 🔹 표시 컬럼 순서
+            display_cols = ["시간", "T2"] + cols if "시간" in over_data.columns else ["T2"] + cols
+
+            # 🔹 매핑 적용
+            over_data = over_data[display_cols].round(3)
+            over_data.rename(columns=col_name_map, inplace=True)
+
+            return over_data.tail(10)
+
+    # ===============================
+    # 🔹 공통 에러 처리용 함수
+    # ===============================
+    def make_placeholder_chart(title):
+        """데이터 없을 때 표시되는 안내 그래프"""
+        fig, ax = plt.subplots(figsize=(6, 3))
+        ax.text(0.5, 0.5,
+                f"📡 {title}\n데이터 수집 중입니다. 잠시만 기다려주세요.",
+                ha="center", va="center", color="gray", fontsize=11)
+        ax.axis("off")
         return fig
     
-    # ✅ 용융 단계
+    # ───────────────────────────────
+    # 🔹 용융 단계
+    # ───────────────────────────────
     @output
     @render.plot
     def mv_chart_melting():
-        df = current_data().tail(50)
-        cols = ["molten_temp", "molten_volume"]
-        idx, T2, UCL = calc_hotelling_t2(df, cols)
-        return plot_t2_chart(idx, T2, UCL, "용융 단계")
+        try:
+            df = current_data().tail(50)
+            cols = ["molten_temp", "molten_volume"]
+            idx, T2, UCL = calc_hotelling_t2(df, cols)
+            return plot_t2_chart(idx, T2, UCL, "용융 단계")
+        except Exception:
+            return make_placeholder_chart("용융 단계")
 
-    # ✅ 충진 단계
+
+    @output
+    @render.table
+    def mv_log_melting():
+        try:
+            df = current_data().tail(50)
+            cols = ["molten_temp", "molten_volume"]
+            return make_overlog(df, cols)
+        except Exception:
+            return pd.DataFrame({"메시지": ["데이터 수집 중입니다. 잠시만 기다려주세요."]})
+
+    # ───────────────────────────────
+    # 🔹 충진 단계
+    # ───────────────────────────────
     @output
     @render.plot
     def mv_chart_filling():
-        df = current_data().tail(50)
-        cols = ["sleeve_temperature", "EMS_operation_time",
-                "low_section_speed", "high_section_speed", "cast_pressure"]
-        idx, T2, UCL = calc_hotelling_t2(df, cols)
-        return plot_t2_chart(idx, T2, UCL, "충진 단계")
+        try:
+            df = current_data().tail(50)
+            cols = ["sleeve_temperature", "EMS_operation_time",
+                    "low_section_speed", "high_section_speed", "cast_pressure"]
+            idx, T2, UCL = calc_hotelling_t2(df, cols)
+            return plot_t2_chart(idx, T2, UCL, "충진 단계")
+        except Exception:
+            return make_placeholder_chart("충진 단계")
 
-    # ✅ 냉각 단계
+
+    @output
+    @render.table
+    def mv_log_filling():
+        try:
+            df = current_data().tail(50)
+            cols = ["sleeve_temperature", "EMS_operation_time",
+                    "low_section_speed", "high_section_speed", "cast_pressure"]
+            return make_overlog(df, cols)
+        except Exception:
+            return pd.DataFrame({"메시지": ["데이터 수집 중입니다. 잠시만 기다려주세요."]})
+
+    # ───────────────────────────────
+    # 🔹 냉각 단계
+    # ───────────────────────────────
     @output
     @render.plot
     def mv_chart_cooling():
-        df = current_data().tail(50)
-        cols = [c for c in [
-            "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
-            "lower_mold_temp1", "lower_mold_temp2", "lower_mold_temp3",
-            "Coolant_temperature"
-        ] if c in df.columns]
-        idx, T2, UCL = calc_hotelling_t2(df, cols)
-        return plot_t2_chart(idx, T2, UCL, "냉각 단계")
+        try:
+            df = current_data().tail(50)
 
-    # ✅ 생산 속도
+            # ✅ (추가) 한글 컬럼명을 영어로 자동 되돌리기
+            reverse_map = {v: k for k, v in label_map.items()}
+            df.rename(columns=reverse_map, inplace=True)
+
+            cols = [
+                "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+                "lower_mold_temp1", "lower_mold_temp2", "lower_mold_temp3",
+                "Coolant_temperature"
+            ]
+
+            # ✅ 실제 존재하는 컬럼만 필터
+            cols = [c for c in cols if c in df.columns]
+
+            if len(cols) < 2:
+                print("⚠ 냉각 단계 컬럼 부족:", cols)
+                return make_placeholder_chart("냉각 단계")
+
+            idx, T2, UCL = calc_hotelling_t2(df, cols)
+            return plot_t2_chart(idx, T2, UCL, "냉각 단계")
+
+        except Exception as e:
+            print("❌ 냉각 단계 에러:", e)
+            return make_placeholder_chart("냉각 단계")
+
+
+    @output
+    @render.table
+    def mv_log_cooling():
+        try:
+            df = current_data().tail(50)
+            reverse_map = {v: k for k, v in label_map.items()}
+            df = df.rename(columns=reverse_map)   # ✅ inplace=False로 안전하게
+    
+            cols = [
+                "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+                "lower_mold_temp1", "lower_mold_temp2", "lower_mold_temp3",
+                "Coolant_temperature"
+            ]
+    
+            available_cols = [c for c in cols if c in df.columns]
+            print("냉각 단계 사용 컬럼:", available_cols)
+    
+            if not available_cols:
+                return pd.DataFrame({"메시지": ["냉각 단계 데이터가 존재하지 않습니다."]})
+    
+            log_df = make_overlog(df, available_cols)
+    
+            if log_df is None or log_df.empty:
+                return pd.DataFrame({"메시지": ["모든 데이터가 UCL 이하입니다."]})
+            return log_df
+    
+        except Exception as e:
+            import traceback
+            print("❌ 냉각 단계 로그 생성 오류:", e)
+            traceback.print_exc()
+            return pd.DataFrame({"메시지": ["데이터 수집 중입니다. 잠시만 기다려주세요."]})
+
+
+    # ───────────────────────────────
+    # 🔹 생산 속도
+    # ───────────────────────────────
     @output
     @render.plot
     def mv_chart_speed():
-        df = current_data().tail(50)
-        cols = ["facility_operation_cycleTime", "production_cycletime"]
-        idx, T2, UCL = calc_hotelling_t2(df, cols)
-        return plot_t2_chart(idx, T2, UCL, "생산 속도")
+        try:
+            df = current_data().tail(50)
+            cols = ["facility_operation_cycleTime", "production_cycletime"]
+            idx, T2, UCL = calc_hotelling_t2(df, cols)
+            return plot_t2_chart(idx, T2, UCL, "생산 속도")
+        except Exception:
+            return make_placeholder_chart("생산 속도")
 
-    # ✅ 제품 테스트
+
+    @output
+    @render.table
+    def mv_log_speed():
+        try:
+            df = current_data().tail(50)
+            cols = ["facility_operation_cycleTime", "production_cycletime"]
+            return make_overlog(df, cols)
+        except Exception:
+            return pd.DataFrame({"메시지": ["데이터 수집 중입니다. 잠시만 기다려주세요."]})
+
+    # ───────────────────────────────
+    # 🔹 제품 테스트
+    # ───────────────────────────────
     @output
     @render.plot
     def mv_chart_quality():
-        df = current_data().tail(50)
-        cols = ["biscuit_thickness", "physical_strength"]
-        idx, T2, UCL = calc_hotelling_t2(df, cols)
-        return plot_t2_chart(idx, T2, UCL, "제품 테스트")
+        try:
+            df = current_data().tail(50)
+            cols = ["biscuit_thickness", "physical_strength"]
+            idx, T2, UCL = calc_hotelling_t2(df, cols)
+            return plot_t2_chart(idx, T2, UCL, "제품 테스트")
+        except Exception:
+            return make_placeholder_chart("제품 테스트")
+
+
+    @output
+    @render.table
+    def mv_log_quality():
+        try:
+            df = current_data().tail(50)
+            cols = ["biscuit_thickness", "physical_strength"]
+            return make_overlog(df, cols)
+        except Exception:
+            return pd.DataFrame({"메시지": ["데이터 수집 중입니다. 잠시만 기다려주세요."]})
+
 
     @output
     @render.data_frame
