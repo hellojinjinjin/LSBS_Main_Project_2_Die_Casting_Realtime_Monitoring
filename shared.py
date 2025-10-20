@@ -8,12 +8,12 @@ try:
 except UnicodeDecodeError:
     streaming_df = pd.read_csv(app_dir / "./data/test.csv", encoding="cp949")
 
-# # real_time 컬럼을 datetime 형식으로 변환
-# streaming_df["real_time"] = pd.to_datetime(streaming_df["real_time"], errors="coerce")
+# real_time 컬럼을 datetime 형식으로 변환
+streaming_df["real_time"] = pd.to_datetime(streaming_df["real_time"], errors="coerce")
 
 # # 오름차순 정렬
 # streaming_df = streaming_df.sort_values(by="real_time", ascending=True).reset_index(drop=True)
-# streaming_df.to_csv("./data/test.csv",encoding="utf-8")
+# streaming_df.to_csv("./data/test.csv", encoding="utf-8-sig", index=False)
 
 class RealTimeStreamer:
     def __init__(self, data: pd.DataFrame):

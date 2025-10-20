@@ -23,6 +23,7 @@ from shared import streaming_df, RealTimeStreamer, KFStreamer
 import plotly.express as px
 import plotly.graph_objects as go
 from fpdf import FPDF
+import datetime
 
 # ✅ 표시에서 제외할 컬럼
 EXCLUDE_COLS = ["id", "line", "name", "mold_name", "date", "time", "registration_time", "count"]
@@ -683,9 +684,12 @@ def field_dashboard_ui():
                     "display:grid; grid-template-columns:1fr 2fr; gap:20px;"
                 )
             },
-            ui.card(
-                ui.card_header("스트리밍 제어"),
-            ),
+        # ───────────── 공정 상태 카드 ─────────────
+        ui.card(
+            ui.card_header("공정 상태"),
+            ui.output_ui("process_status_card"),  # ✅ 추가
+            ui.output_ui("realtime_predict_card"),  # 🧠 추가
+        ),
             ui.card(
                 ui.card_header("🧩 주조 공정 실시간 상태"),
                 ui.output_ui("process_svg_inline"),
@@ -697,14 +701,6 @@ def field_dashboard_ui():
         ui.card(
             ui.card_header("📊 실시간 데이터"),
             ui.div(
-                ui.output_data_frame("recent_data_table"),
-                # 🔹 스크롤이 생기도록 wrapping div에 명시적 width/overflow 지정
-                style=(
-                    "width:100%; "
-                    "overflow-x:auto; overflow-y:auto; "  # 가로/세로 스크롤 모두 허용
-                    "max-height:500px; "  # 너무 길면 세로 스크롤
-                    "display:block;"
-                )
             ),
             style="width:100%;"
         ),
@@ -1801,11 +1797,16 @@ def server(input, output, session):
             current_data.set(s.get_current_data())
             latest = next_batch.iloc[-1].to_dict()
 
-            clean_values = {
-                k: (float(v) if pd.notna(v) else 0.0)
-                for k, v in latest.items()
-                if isinstance(v, (int, float))
-            }
+            clean_values = {}
+            for k, v in latest.items():
+                # ❌ 불필요한 키 제거
+                if any(sub in k.lower() for sub in ["unnamed", "index"]):
+                    continue
+                if not isinstance(v, (int, float)) or pd.isna(v):
+                    continue
+                # ✅ HTML id로 안전하게 바꾸기
+                safe_key = str(k).replace(":", "_").replace(" ", "_")
+                clean_values[safe_key] = float(v)
             await session.send_custom_message("updateSensors", clean_values)
         else:
             is_streaming.set(False)
@@ -1850,6 +1851,248 @@ def server(input, output, session):
             </text>
         </g>
         """
+    
+    # ======================================================
+    # 🎯 목표 계산 (앱 실행 시 1회 수행)
+    # ======================================================
+
+    def _get_prod_date(t):
+        return (t - datetime.timedelta(days=1)).date() if t.time() < datetime.time(8,0) else t.date()
+
+    def _get_shift(t):
+        if datetime.time(8,0) <= t.time() < datetime.time(20,0):
+            return "Day"
+        else:
+            return "Night"
+
+    streaming_df["prod_date"] = streaming_df["real_time"].apply(_get_prod_date)
+    streaming_df["shift"] = streaming_df["real_time"].apply(_get_shift)
+
+    # === 조별 목표량 (row 수 × 1.1)
+    shift_target_df = (
+        streaming_df.groupby(["prod_date","shift"])
+        .size().reset_index(name="shift_target")
+    )
+    shift_target_df["shift_target"] = (shift_target_df["shift_target"] * 1.1).round().astype(int)
+
+    # === 일일 목표량 (08~익일08시 row 수 × 1.1)
+    daily_target_df = (
+        streaming_df.groupby("prod_date")
+        .size().reset_index(name="daily_target")
+    )
+    daily_target_df["daily_target"] = (daily_target_df["daily_target"] * 1.1).round().astype(int)
+
+
+    # ======================================================
+    # ⚙️ 실시간 달성률 계산 함수
+    # ======================================================
+    def calc_achievements(df_live):
+        if df_live is None or df_live.empty:
+            return 0, 0
+
+        df = df_live.copy()
+        df["real_time"] = pd.to_datetime(df["real_time"], errors="coerce")
+        df = df.dropna(subset=["real_time"]).sort_values("real_time")
+
+        now = df["real_time"].iloc[-1]
+        prod_date = (now - datetime.timedelta(days=1)).date() if now.time() < datetime.time(8,0) else now.date()
+
+        # --- 현재 교대 구간 ---
+        if datetime.time(8,0) <= now.time() < datetime.time(20,0):
+            current_shift = "Day"
+            shift_start = datetime.datetime.combine(now.date(), datetime.time(8,0))
+        else:
+            current_shift = "Night"
+            if now.time() >= datetime.time(20,0):
+                shift_start = datetime.datetime.combine(now.date(), datetime.time(20,0))
+            else:
+                shift_start = datetime.datetime.combine(now.date()-datetime.timedelta(days=1), datetime.time(20,0))
+
+        # --- 현재 구간별 누적 row 수 ---
+        df_shift = df[df["real_time"] >= shift_start]
+        shift_count = len(df_shift)
+
+        day_start = datetime.datetime.combine(now.date(), datetime.time(8,0))
+        if now.time() < datetime.time(8,0):
+            day_start -= datetime.timedelta(days=1)
+        df_day = df[df["real_time"] >= day_start]
+        day_count = len(df_day)
+
+        # --- 목표량 조회 ---
+        shift_target_row = shift_target_df.query(
+            "(prod_date == @prod_date) & (shift == @current_shift)"
+        )["shift_target"]
+        daily_target_row = daily_target_df.query(
+            "prod_date == @prod_date"
+        )["daily_target"]
+
+        shift_target = int(shift_target_row.iloc[0]) if not shift_target_row.empty else 1
+        daily_target = int(daily_target_row.iloc[0]) if not daily_target_row.empty else 1
+
+        # --- 달성률 계산 ---
+        shift_rate = min((shift_count / shift_target) * 100, 100)
+        daily_rate = min((day_count / daily_target) * 100, 100)
+
+        return round(daily_rate, 1), round(shift_rate, 1)
+
+
+    # ======================================================
+    # 🧩 실시간 달성률 카드 (UI) — 빈 상태 포함
+    # ======================================================
+    @output
+    @render.ui
+    def process_status_card():
+        import datetime
+
+        df_live = current_data()
+
+        if df_live is None or df_live.empty:
+            return ui.div(
+                {
+                    "style": (
+                        "border:2px solid #ccc; border-radius:12px; padding:14px; "
+                        "box-shadow:0 2px 6px rgba(0,0,0,0.1); background-color:white; "
+                        "font-family:'NanumGothic'; width:100%; max-width:100%;"
+                    )
+                },
+                ui.h4("📅 -", style="margin-bottom:8px; text-align:center; color:#aaa;"),
+                ui.div("⏸ 데이터 대기 중...", 
+                    style="text-align:center; font-size:18px; color:gray; font-weight:bold;"),
+                ui.hr(),
+                ui.div(
+                    {"style": "padding:4px 8px;"},
+                    ui.span("조별 달성률", style="font-weight:bold; color:#777;"),
+                    ui.div("0.0%", style="text-align:right; color:#999; font-weight:bold;"),
+                    ui.div(
+                        {"style": (
+                            "background-color:#e9ecef; border-radius:8px; height:18px; width:100%; margin-top:4px;"
+                        )}
+                    ),
+                ),
+                ui.div(
+                    {"style": "padding:4px 8px; margin-top:6px;"},
+                    ui.span("일일 달성률", style="font-weight:bold; color:#777;"),
+                    ui.div("0.0%", style="text-align:right; color:#999; font-weight:bold;"),
+                    ui.div(
+                        {"style": (
+                            "background-color:#e9ecef; border-radius:8px; height:18px; width:100%; margin-top:4px;"
+                        )}
+                    ),
+                )
+            )
+
+        # 데이터 존재 시
+        latest = df_live.iloc[-1]
+        daily_rate, shift_rate = calc_achievements(df_live)
+
+        shift_icon = "🌞" if datetime.time(8, 0) <= latest["real_time"].time() < datetime.time(20, 0) else "🌙"
+
+        def progress_bar(value, color):
+            return ui.div(
+                {
+                    "style": (
+                        "background-color:#e9ecef; border-radius:8px; height:18px; width:100%; margin-top:4px;"
+                    )
+                },
+                ui.div(
+                    {
+                        "style": (
+                            f"width:{min(value, 100):.1f}%; background-color:{color}; height:100%; "
+                            f"border-radius:8px; transition:width 0.3s;"
+                        )
+                    }
+                )
+            )
+
+        return ui.div(
+            {
+                "style": (
+                    "border:2px solid #e0e0e0; border-radius:12px; padding:14px; "
+                    "box-shadow:0 2px 6px rgba(0,0,0,0.1); background-color:white; "
+                    "font-family:'NanumGothic'; width:100%; max-width:100%;"
+                )
+            },
+            ui.h4(f"📅 {latest['real_time']:%Y-%m-%d %H:%M:%S}",
+                style="margin-bottom:8px; text-align:center; color:#333;"),
+            ui.div(
+                {"style": "text-align:center; font-size:18px; font-weight:bold; color:#555;"},
+                f"{shift_icon} {latest.get('shift','-')}조  (Team {latest.get('team','-')})"
+            ),
+            ui.hr(),
+            ui.div(
+                {"style": "padding:4px 8px;"},
+                ui.span("조별 달성률", style="font-weight:bold; color:#444;"),
+                ui.div(f"{shift_rate:.1f}%", style="text-align:right; color:#0d6efd; font-weight:bold;"),
+                progress_bar(shift_rate, "#0d6efd"),
+            ),
+            ui.div(
+                {"style": "padding:4px 8px; margin-top:6px;"},
+                ui.span("일일 달성률", style="font-weight:bold; color:#444;"),
+                ui.div(f"{daily_rate:.1f}%", style="text-align:right; color:#198754; font-weight:bold;"),
+                progress_bar(daily_rate, "#198754"),
+            ),
+        )
+
+
+    # ======================================================
+    # 🧠 실시간 품질 판정 + 누적 불량률 (깜빡임 애니메이션 포함)
+    # ======================================================
+    @output
+    @render.ui
+    def realtime_predict_card():
+        df_live = current_data()
+
+        if df_live is None or df_live.empty:
+            return ui.div(
+                {
+                    "style": (
+                        "border:2px solid #ccc; border-radius:12px; padding:16px; "
+                        "background-color:white; box-shadow:0 2px 6px rgba(0,0,0,0.1); "
+                        "text-align:center; font-family:'NanumGothic'; width:100%; max-width:100%;"
+                    )
+                },
+                ui.h4("🤖 실시간 품질 판정", style="margin-bottom:10px; color:#333;"),
+                ui.h3("⏸ 데이터 대기 중...", style="color:gray; margin-bottom:6px;"),
+                ui.h5("누적 불량률: -%", style="color:#888; margin-bottom:6px;"),
+                ui.p("데이터 시각: -", style="color:#aaa; font-size:14px; margin-top:6px;"),
+            )
+
+        latest = df_live.tail(1).iloc[0]
+        if "passorfail" not in latest:
+            return ui.div("⚠️ passorfail 컬럼이 없습니다.", style="color:red; text-align:center;")
+
+        result = int(latest["passorfail"])
+        label = "✅ 양품" if result == 0 else "❌ 불량"
+        color = "#28a745" if result == 0 else "#dc3545"
+        emoji = "🟢" if result == 0 else "🔴"
+        anim_color = "rgba(40,167,69,0.25)" if result == 0 else "rgba(220,53,69,0.25)"
+
+        total_count = len(df_live)
+        fail_count = df_live["passorfail"].sum()
+        fail_rate = (fail_count / total_count) * 100 if total_count > 0 else 0
+
+        return ui.div(
+            {
+                "style": (
+                    f"border:2px solid {color}; border-radius:12px; padding:16px; "
+                    f"background-color:white; box-shadow:0 2px 6px rgba(0,0,0,0.1); "
+                    f"text-align:center; font-family:'NanumGothic'; width:100%; max-width:100%; "
+                    f"animation: flash-bg 0.8s ease;"
+                )
+            },
+            ui.tags.style(f"""
+                @keyframes flash-bg {{
+                    0%   {{ box-shadow: 0 0 0px {anim_color}; }}
+                    30%  {{ box-shadow: 0 0 30px {anim_color}; }}
+                    60%  {{ box-shadow: 0 0 20px {anim_color}; }}
+                    100% {{ box-shadow: 0 0 0px transparent; }}
+                }}
+            """),
+            ui.h4("🤖 실시간 품질 판정", style="margin-bottom:10px; color:#333;"),
+            ui.h3(f"{emoji} {label}", style=f"color:{color}; font-weight:bold; margin-bottom:6px;"),
+            ui.h5(f"누적 불량률: {fail_rate:.1f}%", style="color:#555; margin-bottom:6px;"),
+            ui.p(f"데이터 시각: {latest['real_time']}", style="color:#777; font-size:14px; margin-top:6px;"),
+        )
 
 
 # 🟢 TAB1. 끝
