@@ -1,0 +1,19 @@
+{
+  "best_f2": 0.9590003645527148,
+  "best_threshold": 0.7719148634280664,
+  "best_params": {
+    "n_estimators": 308,
+    "max_depth": 4,
+    "learning_rate": 0.01575034674900324,
+    "subsample": 0.9842058027242637,
+    "colsample_bytree": 0.8812083219973552,
+    "min_child_weight": 2.826142236319767,
+    "gamma": 0.7578522757361811,
+    "scale_pos_weight": 1.0342411245476644,
+    "reg_lambda": 4.181585155728907,
+    "reg_alpha": 8.209002196013369,
+    "max_delta_step": 3.244872679900885
+  },
+  "cv_type": "time_series_sorted",
+  "sort_column": "real_time"
+}

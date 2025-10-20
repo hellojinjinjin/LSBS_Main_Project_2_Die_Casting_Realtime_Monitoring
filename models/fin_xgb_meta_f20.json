@@ -1,0 +1,23 @@
+{
+  "beta": 2.0,
+  "best_score_cv": 0.9555327338759811,
+  "best_threshold": 0.8303911993972466,
+  "best_params": {
+    "n_estimators": 773,
+    "max_depth": 7,
+    "learning_rate": 0.053436164465512394,
+    "subsample": 0.8579964165349754,
+    "colsample_bytree": 0.6741538523624249,
+    "min_child_weight": 4.885506691894189,
+    "gamma": 4.9220756957818,
+    "scale_pos_weight": 7.0154455033582845,
+    "reg_lambda": 5.275698320870696,
+    "reg_alpha": 7.8605040952180385
+  },
+  "smote_ratio": 0.48014856441704645,
+  "cv": {
+    "type": "time_series",
+    "min_train_size": 0.6,
+    "n_splits": 5
+  }
+}

@@ -32,6 +32,19 @@ from scipy.stats import f
 
 stream_speed = reactive.Value(2.0)  # 기본 2초 주기
 
+# 🔧 basic_fix 함수 추가 (model.py와 동일하게)
+def basic_fix(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    if "tryshot_signal" in df.columns:
+        df["tryshot_signal"] = df["tryshot_signal"].apply(lambda x: 1 if str(x).upper() == "D" else 0)
+    if {"speed_ratio", "low_section_speed", "high_section_speed"} <= set(df.columns):
+        df.loc[df["speed_ratio"] == float("inf"), "speed_ratio"] = -1
+        df.loc[df["speed_ratio"] == -float("inf"), "speed_ratio"] = -1
+        df.loc[(df["low_section_speed"] == 0) & (df["high_section_speed"] == 0), "speed_ratio"] = -2
+    if "pressure_speed_ratio" in df.columns:
+        df.loc[np.isinf(df["pressure_speed_ratio"]), "pressure_speed_ratio"] = -1
+    return df
+
 def calc_baseline_ucl(train_df, cols):
     """Train 데이터 기반 UCL, mean, inv_cov 계산"""
     X = train_df[cols].dropna().values
@@ -169,6 +182,15 @@ pio.templates.default = "nanum"
 # ===== 모델 불러오기 =====
 MODEL_PATH = "./models/model_2.pkl"
 model = joblib.load(MODEL_PATH)
+
+# ✅ 추가: joblib이 basic_fix를 찾을 수 있게 __main__에 등록
+import sys
+sys.modules['__main__'].basic_fix = basic_fix
+
+model = joblib.load(MODEL_PATH)
+
+MODEL_XGB_PATH = "./models/fin_xgb_f20.pkl"
+model_xgb = joblib.load(MODEL_XGB_PATH)
 
 # ===== 데이터 불러오기 =====
 df_raw = pd.read_csv("./data/train_raw.csv")
