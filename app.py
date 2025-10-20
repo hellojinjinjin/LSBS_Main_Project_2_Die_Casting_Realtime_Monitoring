@@ -753,13 +753,13 @@ def make_dynamic_svg(sensor_list: list[str]) -> str:
 
 def plan_page_ui():
     """생산계획 탭의 UI를 반환하는 함수"""
-    years = list(range(datetime.date.today().year, datetime.date.today().year + 3))
+    years = list(range(datetime.date(2019, 1, 19).year, datetime.date(2019, 1, 19).year + 3))
     months = list(range(1, 13))
     return ui.layout_sidebar(
         ui.sidebar(
             ui.input_numeric("monthly_target", "이달의 총 생산 목표 수", value=20000, min=1000, step=1000),
-            ui.input_select("year", "연도 선택", {str(y): str(y) for y in years}, selected=str(datetime.date.today().year)),
-            ui.input_select("month", "월 선택", {str(m): f"{m}월" for m in months}, selected=str(datetime.date.today().month)),
+            ui.input_select("year", "연도 선택", {str(y): str(y) for y in years}, selected=str(datetime.date(2019, 1, 19).year)),
+            ui.input_select("month", "월 선택", {str(m): f"{m}월" for m in months}, selected=str(datetime.date(2019, 1, 19).month)),
             ui.output_ui("mold_inputs"),
             ui.output_text("remaining_qty"),
             ui.input_action_button("run_plan", "시뮬레이션 실행", class_="btn btn-primary"),
@@ -794,14 +794,14 @@ def main_page(selected_tab: str):
 
     # ───────── 이번달 생산목표 ─────────
     ui.nav_panel(
-    "이달의 생산목표",
+    "생산현황",
     ui.layout_sidebar(
         ui.sidebar(
-            ui.input_date("ref_date", "조회 기준일", value=datetime.date.today()),
+            ui.input_date("ref_date", "조회 기준일", value=datetime.date(2019, 1, 19)),
             style="background-color:#fffaf2; padding:20px; border-radius:10px;"
         ),
         ui.card(
-            ui.card_header("📅 이번달 생산 현황"),
+            ui.card_header("📅 생산 현황"),
             ui.output_ui("calendar_view_current"),
             ui.hr(),
             ui.output_text("daily_summary"),   # ← 누적/예상 표시
@@ -812,7 +812,7 @@ def main_page(selected_tab: str):
 
     # ───────── 다음달 생산목표 ─────────
     ui.nav_panel(
-        "다음달의 생산목표",
+        "생산목표",
         plan_page_ui()  # ✅ 기존의 시뮬레이션 탭
     ),
 ),
@@ -1306,7 +1306,7 @@ def server(input, output, session):
     fin_all = fin_all.dropna(subset=["real_time"]).copy()
 
     # 날짜 변환 (2019 → 2025년 10월)
-    fin_all["real_time"] = fin_all["real_time"] + pd.DateOffset(years=6, months=9)
+    fin_all["real_time"] = fin_all["real_time"] 
     fin_all["date"] = fin_all["real_time"].dt.floor("D")
 
     # =====================================================
@@ -1316,7 +1316,7 @@ def server(input, output, session):
     def calendar_view_current():
         ref_date_str = input.ref_date() or None
         if not ref_date_str:
-            ref_date = datetime.date.today()
+            ref_date = datetime.date(2019, 1, 19)
         else:
             ref_date = pd.to_datetime(ref_date_str).date()
 
@@ -1397,7 +1397,8 @@ def server(input, output, session):
     def daily_summary():
         ref_date_str = input.ref_date() or None
         if not ref_date_str:
-            ref_date = datetime.date.today()
+            ref_date = datetime.date(2019, 1, 19)
+
         else:
             ref_date = pd.to_datetime(ref_date_str).normalize()
 
@@ -1546,16 +1547,34 @@ def server(input, output, session):
     @output
     @render.ui
     def calendar_view():
-        df = plan_df.get()   # ✅ ← 여기 들여쓰기 맞춰줘야 함 (함수 안)
+        df = plan_df()
         if df.empty:
             return ui.p("시뮬레이션 실행 버튼을 눌러주세요.", style="text-align:center; color:grey;")
+
+        # ✅ 영어 변수명 → 한글 매핑
+        label_map = {
+            "molten_temp": "용탕 온도",
+            "upper_mold_temp1": "상금형 온도1",
+            "upper_mold_temp2": "상금형 온도2",
+            "upper_mold_temp3": "상금형 온도3",
+            "lower_mold_temp1": "하금형 온도1",
+            "lower_mold_temp2": "하금형 온도2",
+            "lower_mold_temp3": "하금형 온도3",
+            "sleeve_temperature": "슬리브 온도",
+            "cast_pressure": "주조 압력",
+            "biscuit_thickness": "비스킷 두께",
+            "physical_strength": "인장 강도",
+            "Coolant_temperature": "냉각수 온도",
+        }
 
         year, month = int(input.year()), int(input.month())
         cal = calendar.monthcalendar(year, month)
         days_kr = ["일", "월", "화", "수", "목", "금", "토"]
 
         html = '<div style="display:grid; grid-template-columns: 80px repeat(7, 1fr); gap:4px;">'
-        html += '<div></div>' + "".join([f"<div style='font-weight:bold; text-align:center;'>{d}</div>" for d in days_kr])
+        html += '<div></div>' + "".join(
+            [f"<div style='font-weight:bold; text-align:center;'>{d}</div>" for d in days_kr]
+        )
 
         for w_i, week in enumerate(cal, start=1):
             html += f"<div style='font-weight:bold;'>{w_i}주</div>"
@@ -1576,7 +1595,8 @@ def server(input, output, session):
                             else:
                                 settings = row.to_dict("records")[0]
                                 rows_html = "".join([
-                                    f"<tr><td>{k}</td><td>{v:.2f}</td></tr>"
+                                    # ✅ 영어 대신 한글 출력
+                                    f"<tr><td>{label_map.get(k, k)}</td><td>{v:.2f}</td></tr>"
                                     for k, v in settings.items() if k != "mold_code"
                                 ])
                                 tooltip_html = f"""
@@ -1601,6 +1621,7 @@ def server(input, output, session):
 
         html += "</div>"
         return ui.HTML(html)
+
 
 
 
