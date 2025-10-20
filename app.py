@@ -867,13 +867,17 @@ def field_dashboard_ui():
                 style="width:100%;"
             ),
         ),
-
-        # ──────────────── 2행: 실시간 데이터 표 ────────────────
+        # ──────────────── 2행: 실시간 알림창 ────────────────
         ui.card(
-            ui.card_header("📊 실시간 데이터"),
+            ui.card_header("🔔 실시간 불량 알림"),
             ui.div(
+                ui.output_ui("realtime_alert_box"),
+                style=(
+                    "max-height:300px; overflow-y:auto; background:white; "
+                    "padding:10px; border-radius:8px; border:1px solid #eee;"
+                ),
             ),
-            style="width:100%;"
+            style="width:100%; background-color:#fff8e1;"
         ),
     )
 
@@ -2382,6 +2386,12 @@ def server(input, output, session):
             current_data.set(s.get_current_data())
             latest = next_batch.iloc[-1].to_dict()
 
+            # 🚨 불량 발생 시 알림 추가
+            if "passorfail" in latest and latest["passorfail"] == 1:
+                mold = latest.get("mold_code", "-")
+                time_str = latest.get("real_time", "")
+                push_alert(f"🚨 불량 발생 — 금형 {mold}, 시각 {time_str}", "danger")
+
             clean_values = {}
             for k, v in latest.items():
                 # ❌ 불필요한 키 제거
@@ -2714,6 +2724,59 @@ def server(input, output, session):
         return ui.HTML(
             f"<span style='background:{bg_color}; color:white; padding:3px 10px; border-radius:10px; font-size:13px;'>⏩ {label}</span>"
         )
+
+    # ============================================
+    # 🔔 실시간 불량 알림 시스템
+    # ============================================
+    alerts = reactive.Value([])
+
+    def push_alert(message, level="danger"):
+        """새로운 알림 추가 (최근 20개 유지)"""
+        color_map = {
+            "info": "#2196F3",
+            "success": "#4CAF50",
+            "warning": "#FFC107",
+            "danger": "#E53935",
+        }
+        icon_map = {
+            "info": "fa-circle-info",
+            "success": "fa-check-circle",
+            "warning": "fa-triangle-exclamation",
+            "danger": "fa-circle-exclamation",
+        }
+
+        now = datetime.datetime.now().strftime("%H:%M:%S")
+        alerts_list = alerts()
+        alerts_list.append({
+            "msg": message,
+            "level": level,
+            "color": color_map.get(level, "#2196F3"),
+            "icon": icon_map.get(level, "fa-circle-info"),
+            "time": now,
+        })
+        alerts.set(alerts_list[-20:])  # ✅ 최근 20개까지만 유지
+
+
+    @output
+    @render.ui
+    def realtime_alert_box():
+        items = list(reversed(alerts()))
+        if not items:
+            return ui.div("⚪ 현재 불량 알림이 없습니다.", style="color:gray; text-align:center;")
+
+        html = ""
+        for a in items:
+            html += f"""
+            <div style="
+                margin-bottom:6px; border-left:4px solid {a['color']};
+                padding-left:8px; background:rgba(255,0,0,0.02);
+                border-radius:4px;">
+                <i class="fa-solid {a['icon']}" style="color:{a['color']};"></i>
+                <span style="margin-left:6px;">{a['msg']}</span>
+                <span style="float:right; color:gray; font-size:12px;">{a['time']}</span>
+            </div>
+            """
+        return ui.HTML(html)
 
 # 🟢 TAB1. 끝
 # ============================================================
