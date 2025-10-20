@@ -1608,25 +1608,34 @@ def server(input, output, session):
 
     def plot_t2_chart(index, T2, UCL, title):
         fig, ax = plt.subplots(figsize=(6, 3))
-        if T2 is None:
+        if T2 is None or len(T2) == 0:
             ax.text(0.5, 0.5, "데이터 부족", ha="center", va="center")
             ax.axis("off")
             return fig
-
-        ax.plot(index, T2, marker='o', color='steelblue', label='T²')
-        ax.axhline(UCL, color='r', linestyle='--', label='UCL(99%)')
+    
+        # 🔹 1️⃣ 데이터 선과 기준선 먼저 그림
+        ax.plot(index, T2, marker="o", color="steelblue", label="T²", alpha=0.8)
+        ax.axhline(UCL, color="red", linestyle="--", label="UCL(99%)")
+    
+        # 🔹 2️⃣ y축 한계 계산 후 UCL 위쪽 배경 영역 칠하기
+        ax.figure.canvas.draw()  # 축 한계 계산을 위해 필요
+        y_min, y_max = ax.get_ylim()
+        ax.axhspan(UCL, y_max, color="lightcoral", alpha=0.25, zorder=0)
+    
+        # 🔹 3️⃣ 스타일
         ax.set_title(title)
         ax.set_ylabel("T²")
         ax.legend()
         ax.grid(True, alpha=0.3)
         plt.tight_layout()
+    
         return fig
     
     # ✅ 용융 단계
     @output
     @render.plot
     def mv_chart_melting():
-        df = current_data()
+        df = current_data().tail(50)
         cols = ["molten_temp", "molten_volume"]
         idx, T2, UCL = calc_hotelling_t2(df, cols)
         return plot_t2_chart(idx, T2, UCL, "용융 단계")
@@ -1635,7 +1644,7 @@ def server(input, output, session):
     @output
     @render.plot
     def mv_chart_filling():
-        df = current_data()
+        df = current_data().tail(50)
         cols = ["sleeve_temperature", "EMS_operation_time",
                 "low_section_speed", "high_section_speed", "cast_pressure"]
         idx, T2, UCL = calc_hotelling_t2(df, cols)
@@ -1645,7 +1654,7 @@ def server(input, output, session):
     @output
     @render.plot
     def mv_chart_cooling():
-        df = current_data()
+        df = current_data().tail(50)
         cols = [c for c in [
             "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
             "lower_mold_temp1", "lower_mold_temp2", "lower_mold_temp3",
@@ -1658,7 +1667,7 @@ def server(input, output, session):
     @output
     @render.plot
     def mv_chart_speed():
-        df = current_data()
+        df = current_data().tail(50)
         cols = ["facility_operation_cycleTime", "production_cycletime"]
         idx, T2, UCL = calc_hotelling_t2(df, cols)
         return plot_t2_chart(idx, T2, UCL, "생산 속도")
@@ -1667,7 +1676,7 @@ def server(input, output, session):
     @output
     @render.plot
     def mv_chart_quality():
-        df = current_data()
+        df = current_data().tail(50)
         cols = ["biscuit_thickness", "physical_strength"]
         idx, T2, UCL = calc_hotelling_t2(df, cols)
         return plot_t2_chart(idx, T2, UCL, "제품 테스트")
