@@ -185,10 +185,6 @@ df_predict = pd.read_csv("./data/train.csv")
 df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace([np.inf, -np.inf], np.nan)
 
 
-# 예측 탭용 (모델 input 그대로)
-df_predict = pd.read_csv("./data/train.csv")
-df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace([np.inf, -np.inf], np.nan)
-
 # df_predict = df_predict[
 #     (df_predict["low_section_speed"] != 65535) &
 #     (df_predict["lower_mold_temp3"] != 65503) &
@@ -872,13 +868,7 @@ def main_page(selected_tab: str):
         # 🧭 품질 모니터링 (예측 시뮬레이션 UI 포함)
         "quality": ui.navset_tab(
             ui.nav_panel("원인 분석",
-                ui.card(
-                    ui.card_header("불량 및 공정 에러 발생 조건", style="text-align:center;"),
-                    ui.output_plot("local_factor_plot", click=True),   # 클릭 가능한 그래프
-                    ui.hr(),
-                    ui.output_ui("local_factor_desc"),      # 텍스트 설명
-                    ui.output_ui("sensor_detail_modal")     # 클릭 시 뜨는 모달창
-                ),
+
                 # ──────────────── 2행: 실시간 데이터 표 ────────────────
                 ui.card(
                     ui.card_header("📊 실시간 데이터"),
@@ -894,7 +884,18 @@ def main_page(selected_tab: str):
                     ),
                     style="width:100%;"
                 ),
+
+                ui.card(
+                    ui.card_header("불량 및 공정 에러 발생 조건", style="text-align:center;"),
+                    ui.output_plot("local_factor_plot", click=True),   # 클릭 가능한 그래프
+                    ui.hr(),
+                    ui.output_ui("local_factor_desc"),      # 텍스트 설명
+                    ui.output_ui("sensor_detail_modal")     # 클릭 시 뜨는 모달창
+                ),
             ),
+
+
+
             ui.nav_panel("실시간 관리도",
                 ui.card(
                     ui.card_header(
@@ -2085,20 +2086,9 @@ def server(input, output, session):
             return pd.DataFrame({"메시지": ["데이터 수집 중입니다. 잠시만 기다려주세요."]})
 
 
-    @output
-    @render.data_frame
-    def recent_data_table():
-        df = current_data()
-        if df is None or df.empty:
-            return pd.DataFrame({"데이터": ["현재 수신된 데이터가 없습니다."]})
 
-        df = df.copy().round(2).fillna("-")
 
-        # ✅ 컬럼명을 한글로 매핑
-        inv_label_map = label_map  # 그대로 사용해도 됨
-        df.rename(columns=inv_label_map, inplace=True)
 
-        return df.reset_index(drop=True)
 
     # ---------- 버튼 렌더링 ----------
     @output
@@ -2590,9 +2580,72 @@ def server(input, output, session):
 # 🟢 TAB2. 품질
 # ============================================================
 
+    selected_row = reactive.Value(None)
+
     last_proba = reactive.value(None)
     loading = reactive.value(False)
     local_factors = reactive.value(None)
+
+
+
+
+    @output
+    @render.data_frame
+    def recent_data_table():
+        df = current_data()
+        if df is None or df.empty:
+            return pd.DataFrame({"알림": ["현재 수신된 데이터가 없습니다."]})
+
+        data = df.copy()
+
+        # ✅ 2.5) passorfail 컬럼을 사람이 보기 좋게 한글 변환
+        if "passorfail" in data.columns:
+            data["passorfail"] = data["passorfail"].map({0: "양품", 1: "불량"}).fillna(data["passorfail"])
+
+        # 1) 3시그마 이상치 행 찾기
+        numeric_cols = data.select_dtypes(include="number").columns.tolist()
+        if numeric_cols:
+            means = data[numeric_cols].mean()
+            stds = data[numeric_cols].std().replace(0, np.nan)
+            z = (data[numeric_cols] - means) / stds
+            mask_3sigma = (z.abs() > 3).any(axis=1)
+        else:
+            mask_3sigma = pd.Series(False, index=data.index)
+
+        # 2) 불량 행(passorfail==1) 찾기
+        if "passorfail" in data.columns:
+            mask_fail = data["passorfail"] == 1
+        else:
+            mask_fail = pd.Series(False, index=data.index)
+
+        # 3) 두 조건 중 하나라도 맞는 행만 필터
+        flagged = data[mask_3sigma | mask_fail].copy()
+
+        # 4) 없으면 “이상 행 없음” 표시(표는 1행 안내)
+        if flagged.empty:
+            return pd.DataFrame({"알림": ["현재 3σ 이상치나 불량 행이 없습니다."]})
+
+        # 5) 보기 좋게 정리
+        #    - 최근 것부터 최대 200행
+        flagged = flagged.tail(200).round(2)
+
+        # 6) 한글 컬럼명으로 매핑(네가 선언한 label_map 재사용)
+        #    label_map에 없는 건 원래 이름 유지
+        def to_kor(col):
+            return label_map.get(col, col)
+        flagged.rename(columns={c: to_kor(c) for c in flagged.columns}, inplace=True)
+
+        # 7) 자주 보는 컬럼 앞으로 배치
+        prefer = [to_kor(c) for c in ["real_time", "passorfail"] if c in df.columns]
+        other_cols = [c for c in flagged.columns if c not in prefer]
+        flagged = flagged[prefer + other_cols] if prefer else flagged
+
+        return flagged.reset_index(drop=True)
+
+
+
+
+
 
     @reactive.effect
     @reactive.event(input.predict_btn)
@@ -3088,6 +3141,7 @@ def server(input, output, session):
         plt.tight_layout()
         return fig
 
+
     @output
     @render.ui
     def local_factor_desc():
@@ -3095,10 +3149,30 @@ def server(input, output, session):
         if df is None or df.empty:
             return ui.p("⚪ 실시간 데이터 수신 중이 아닙니다.", style="color:gray;")
 
-        numeric_cols = df.select_dtypes(include="number").columns.tolist()
-        if not numeric_cols:
-            return ui.p("데이터에 수치형 센서가 없습니다.")
+        # === 1️⃣ 사용할 주요 컬럼만 선택 ===
+        selected_cols = [
+            # 공정 상태 관련
+            "count", "speed_ratio", "pressure_speed_ratio",
+            # 용융 단계
+            "molten_temp",
+            # 충진 단계
+            "sleeve_temperature", "EMS_operation_time",
+            "low_section_speed", "high_section_speed",
+            "molten_volume", "cast_pressure", "mold_code",
+            # 냉각 단계
+            "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+            "lower_mold_temp1", "lower_mold_temp2", "Coolant_temperature",
+            # 공정 속도 관련
+            "facility_operation_cycleTime", "production_cycletime",
+            # 품질 및 성능
+            "biscuit_thickness", "physical_strength",
+        ]
 
+        numeric_cols = [c for c in selected_cols if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
+        if not numeric_cols:
+            return ui.p("⚪ 표시할 수치형 센서가 없습니다.", style="color:gray;")
+
+        # === 2️⃣ Z-score 기반 이상 감지 ===
         mean_std = df[numeric_cols].describe().T[["mean", "std"]]
         latest = df.iloc[-1]
 
@@ -3111,11 +3185,14 @@ def server(input, output, session):
         if not anomalies:
             return ui.p("✅ 현재 이상 조건이 없습니다.", style="color:green;")
 
+        # === 3️⃣ 한글 라벨 적용 ===
         alerts = [
-            f"<li><b>{col}</b>: 현재 {val:.2f} (평균 {mean:.2f} ± {3*std:.2f}) → "
-            f"<span style='color:red;'>이상 감지</span></li>"
+            f"<li><b>{label_map.get(col, col)}</b>: 현재 {val:.2f} "
+            f"(평균 {mean:.2f} ± {3*std:.2f}) → <span style='color:red;'>이상 감지</span></li>"
             for col, val, mean, std in anomalies
         ]
+
+        # === 4️⃣ UI 렌더링 ===
         return ui.HTML(f"""
             <div style="background:#fff7f7; padding:10px; border-radius:8px;">
                 <p><b>⚠ 공정 이상 감지 항목 ({len(anomalies)}개)</b></p>
@@ -3123,6 +3200,9 @@ def server(input, output, session):
                 <p style='color:gray;font-size:13px;'>그래프를 클릭하면 상세 추이를 볼 수 있습니다.</p>
             </div>
         """)
+
+
+
 
     # 클릭 이벤트 처리 (y좌표 → 레이블로 변환)
     @reactive.effect
@@ -3132,18 +3212,18 @@ def server(input, output, session):
         if not click:
             return
 
-        # matplotlib 클릭 payload는 보통 domain.y가 실수(막대 인덱스 근처)로 옴
+        # y좌표값(실수형)을 가져오기
         y_val = None
         if isinstance(click, dict):
             y_val = (click.get("domain", {}) or {}).get("y", None)
             if y_val is None:
                 y_val = click.get("y", None)
-
         if y_val is None:
             return
 
+        # 그래프의 y라벨 순서와 매칭
         labels = plot_labels() or []
-        idx = int(round(float(y_val)))            # 실수 → 가장 가까운 막대 인덱스
+        idx = int(round(float(y_val)))
         if idx < 0 or idx >= len(labels):
             return
 
@@ -3154,10 +3234,13 @@ def server(input, output, session):
         if df is None or df.empty or sensor not in df.columns:
             return
 
+        # 한글 센서명으로 제목 표시
+        sensor_name = label_map.get(sensor, sensor)
+
         ui.modal_show(
             ui.modal(
                 ui.output_plot("sensor_detail_plot"),
-                title=f"🔍 {sensor} 센서 상세 그래프",
+                title=f"🔍 {sensor_name} 센서 상세 그래프",
                 size="l",
                 easy_close=True,
             )
@@ -3174,19 +3257,25 @@ def server(input, output, session):
             ax.text(0.5, 0.5, "선택된 센서 데이터가 없습니다.", ha="center", va="center")
             return fig
 
+        # 한글 센서명 매핑
+        sensor_name = label_map.get(sensor, sensor)
+
         y = pd.to_numeric(df[sensor], errors="coerce")
+        y = y.dropna()
         fig, ax = plt.subplots(figsize=(7, 4))
         ax.plot(y.values[-100:], marker="o", linestyle="-", alpha=0.7)
+
         m, s = y.mean(), y.std()
         if pd.notna(m):
             ax.axhline(m, color="green", linestyle="--", label="평균")
         if pd.notna(m) and pd.notna(s):
             ax.axhline(m + 3*s, color="red", linestyle="--", alpha=0.5, label="+3σ")
             ax.axhline(m - 3*s, color="red", linestyle="--", alpha=0.5, label="-3σ")
+
         ax.legend()
-        ax.set_title(f"📈 '{sensor}' 최근 추이 (최근 100개)")
+        ax.set_title(f"📈 '{sensor_name}' 최근 추이 (최근 100개)")
         ax.set_xlabel("시간순")
-        ax.set_ylabel(sensor)
+        ax.set_ylabel(sensor_name)
         ax.grid(True)
         return fig
 
@@ -3197,9 +3286,208 @@ def server(input, output, session):
 
 
 
+    ##### 실시간 이상 데이터 테이블 (3시그마 or 불량만 강조 표시, 클릭 시 조건 카드 열림)
+    # @output
+    # @render.plot
+    # def local_factor_plot():
+    #     df = current_data()
+    #     if df is None or df.empty:
+    #         fig, ax = plt.subplots()
+    #         ax.text(0.5, 0.5, "실시간 데이터 수신 대기 중...", ha="center", va="center", fontsize=13)
+    #         ax.axis("off")
+    #         return fig
+
+    #     # === 1️⃣ 사용할 주요 컬럼만 선택 ===
+    #     selected_cols = [
+    #         # 공정 상태 관련
+    #         "count", "speed_ratio", "pressure_speed_ratio",
+    #         # 용융 단계
+    #         "molten_temp",
+    #         # 충진 단계
+    #         "sleeve_temperature", "EMS_operation_time",
+    #         "low_section_speed", "high_section_speed",
+    #         "molten_volume", "cast_pressure", "mold_code",
+    #         # 냉각 단계
+    #         "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+    #         "lower_mold_temp1", "lower_mold_temp2", "Coolant_temperature",
+    #         # 공정 속도 관련
+    #         "facility_operation_cycleTime", "production_cycletime",
+    #         # 품질 및 성능
+    #         "biscuit_thickness", "physical_strength",
+    #     ]
+
+    #     # 실제 df에 존재하고 수치형인 컬럼만 남김
+    #     numeric_cols = [c for c in selected_cols if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
+    #     if not numeric_cols:
+    #         fig, ax = plt.subplots()
+    #         ax.text(0.5, 0.5, "표시할 수치형 센서 데이터가 없습니다.", ha="center", va="center")
+    #         ax.axis("off")
+    #         return fig
+
+    #     # === 2️⃣ Z-score 계산 ===
+    #     mean_std = df[numeric_cols].describe().T[["mean", "std"]]
+    #     latest = df.iloc[-1]
+    #     z_scores = (latest - mean_std["mean"]) / mean_std["std"]
+    #     z_scores = z_scores.dropna().sort_values(ascending=True)
+
+    #     # 현재 그래프의 y축 카테고리 순서 저장
+    #     plot_labels.set(list(z_scores.index))
+
+    #     # === 3️⃣ 한글 라벨 매핑 ===
+    #     labels = [label_map.get(col, col) for col in z_scores.index]
+
+    #     # === 4️⃣ 그래프 ===
+    #     colors = ["#e74c3c" if abs(z) > 3 else "#95a5a6" for z in z_scores]
+    #     fig, ax = plt.subplots(figsize=(7, 5))
+    #     ax.barh(range(len(z_scores)), z_scores.values, color=colors)
+    #     ax.set_yticks(range(len(z_scores)))
+    #     ax.set_yticklabels(labels)
+    #     ax.set_xlabel("Z-score (표준편차 기준)")
+    #     ax.set_title("실시간 이상 감지 센서 (클릭 시 상세보기)")
+    #     ax.grid(True, axis="x", linestyle="--", alpha=0.5)
+    #     plt.tight_layout()
+    #     return fig
+
+
+    # ✅ 기존 local_factor_plot(실시간용) 교체
+    @output
+    @render.plot
+    def local_factor_plot():
+        df = current_data()
+        if df is None or df.empty:
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "실시간 데이터 수신 대기 중...", ha="center", va="center", fontsize=13)
+            ax.axis("off")
+            return fig
+
+        # 1) 사용할 주요 컬럼만 (UI에 있는 것만)
+        selected_cols = [
+            "count", "speed_ratio", "pressure_speed_ratio",
+            "molten_temp",
+            "sleeve_temperature", "EMS_operation_time",
+            "low_section_speed", "high_section_speed",
+            "molten_volume", "cast_pressure", "mold_code",
+            "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+            "lower_mold_temp1", "lower_mold_temp2", "Coolant_temperature",
+            "facility_operation_cycleTime", "production_cycletime",
+            "biscuit_thickness", "physical_strength",
+        ]
+        numeric_cols = [c for c in selected_cols if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
+        if not numeric_cols:
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "표시할 수치형 센서 데이터가 없습니다.", ha="center", va="center")
+            ax.axis("off")
+            return fig
+
+        # 2) Z-score
+        mean_std = df[numeric_cols].describe().T[["mean", "std"]]
+        latest = df.iloc[-1]
+        z_scores = (latest[numeric_cols] - mean_std["mean"]) / mean_std["std"]
+        z_scores = z_scores.dropna().sort_values(ascending=True)
+
+        # y축 라벨 순서 저장(클릭 처리용)
+        plot_labels.set(list(z_scores.index))
+
+        # 3) 강도별 색상: |z|>2.5=빨강, |z|>1.5=노랑, else=회색
+        colors = []
+        for z in z_scores.values:
+            if abs(z) > 2.5:
+                colors.append("#e74c3c")   # 강한 이상
+            elif abs(z) > 1.5:
+                colors.append("#f1c40f")   # 주의
+            else:
+                colors.append("#95a5a6")   # 정상
+
+        # 4) 한글 레이블
+        ylabels = [label_map.get(c, c) for c in z_scores.index]
+
+        fig, ax = plt.subplots(figsize=(7, 5))
+        ax.barh(range(len(z_scores)), z_scores.values, color=colors)
+        ax.set_yticks(range(len(z_scores)))
+        ax.set_yticklabels(ylabels)
+        ax.set_xlabel("Z-score (표준편차 기준)")
+        ax.set_title("실시간 이상 감지 센서 (클릭 시 상세보기)")
+        ax.grid(True, axis="x", linestyle="--", alpha=0.5)
+        plt.tight_layout()
+        return fig
 
 
 
+
+    @reactive.effect
+    @reactive.event(input.selected_row)
+    def _show_snapshot():
+        idx = input.selected_row()
+        if idx is None:
+            return
+
+        df = current_data()
+        if df is None or df.empty:
+            return
+
+        # ✅ 클릭된 시점 데이터 스냅샷 저장
+        snapshot = df.iloc[:idx + 1].copy()
+        snapshot_file = "/tmp/snapshot.csv"
+        snapshot.to_csv(snapshot_file, index=False)
+        selected_row.set(idx)
+
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.card(
+                        ui.card_header(
+                            "⚙ 선택된 시점의 공정 상태",
+                            style="text-align:center; font-size:20px; font-weight:bold; color:#333;"
+                        ),
+                        ui.output_plot("local_factor_plot"),
+                        ui.hr(),
+                        ui.output_ui("local_factor_desc"),
+                        ui.input_action_button(
+                            "resume_realtime", "🔄 실시간 보기로 돌아가기",
+                            class_="btn btn-outline-primary", style="margin-top:10px;"
+                        )
+                    )
+                ),
+                title="📋 상세 보기 (고정)",
+                size="l",
+                easy_close=True
+            )
+        )
+
+
+
+    @reactive.effect
+    @reactive.event(input.selected_row)
+    def _show_condition_card():
+        idx = input.selected_row()
+        if idx is None:
+            return
+
+        # 클릭 시 '불량 및 공정 에러 발생 조건' 카드 모달로 표시
+        ui.modal_show(
+            ui.modal(
+                ui.card(
+                    ui.card_header(
+                        "⚙ 불량 및 공정 에러 발생 조건",
+                        style="text-align:center; font-size:20px; font-weight:bold; color:#333;"
+                    ),
+                    ui.output_plot("local_factor_plot"),
+                    ui.hr(),
+                    ui.output_ui("local_factor_desc"),
+                    easy_close=True,
+                ),
+                title="📋 상세 조건 보기",
+                size="xl",
+                easy_close=True
+            )
+        )
+
+
+    @reactive.effect
+    @reactive.event(input.resume_realtime)
+    def _resume_realtime():
+        selected_row.set(None)
+        ui.modal_remove()
 
 
 
