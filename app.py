@@ -3246,6 +3246,36 @@ def server(input, output, session):
 # 🟢 TAB3. 데이터 분석 끝
 # ============================================================
 
+# ======================================
+# ✅ 6시그마 json 파일 생성 코드
+# ======================================
+# import pandas as pd
+# import numpy as np
+# import json
+
+# df = pd.read_csv("./data/fin_train.csv")
+# num_cols = df.select_dtypes(include=["number"]).columns
+
+# thresholds = {}
+
+# for col in num_cols:
+#     mu = df[col].mean()
+#     sigma = df[col].std()
+#     if pd.isna(mu) or pd.isna(sigma):
+#         continue
+
+#     mu = float(np.nan_to_num(mu, nan=0.0))
+#     sigma = float(np.nan_to_num(sigma, nan=0.0))
+
+#     thresholds[col] = {
+#         "mu": round(mu, 4),
+#         "sigma": round(sigma, 4),
+#         "min": round(mu - 3 * sigma, 4),
+#         "max": round(mu + 3 * sigma, 4)
+#     }
+
+# with open("./www/sixsigma_thresholds_extended.json", "w", encoding="utf-8") as f:
+#     json.dump(thresholds, f, ensure_ascii=False, indent=2, allow_nan=False)
 
 # ======== 앱 실행 ========
 app = App(app_ui, server, static_assets=app_dir / "www")
