@@ -1836,29 +1836,34 @@ def server(input, output, session):
         await session.send_custom_message("updateSensors", reset_values)
 
     # === GIF 표시 제어 (스트리밍 상태 연동) ===
+
+    # ▶ 시작 시 GIF 표시
     @reactive.effect
     @reactive.event(input.start_stream)
     async def _gif_start():
-        # ▶ 시작 시 GIF 표시
         await session.send_custom_message("updateGif", {"src": "die-castings.gif"})
 
+
+    # ⏸ 일시정지 시 PNG 표시
     @reactive.effect
     @reactive.event(input.pause_stream)
     async def _gif_pause():
-        # ⏸ 일시정지 시 PNG 표시
         await session.send_custom_message("updateGif", {"src": "die-castings.png"})
 
+
+    # 🔄 리셋 시 PNG 표시
     @reactive.effect
     @reactive.event(input.reset_stream)
     async def _gif_reset():
-        # 🔄 리셋 시 PNG 표시
         await session.send_custom_message("updateGif", {"src": "die-castings.png"})
 
-    # ✅ 스트리밍이 중단 상태일 때도 자동 PNG 표시 유지
+
+    # ✅ 스트리밍이 중단 상태일 때도 자동으로 PNG 표시 유지
     @reactive.effect
-    def _sync_gif_state():
+    async def _sync_gif_state():
         if not is_streaming():
-            session.send_custom_message("updateGif", {"src": "die-castings.png"})
+            await session.send_custom_message("updateGif", {"src": "die-castings.png"})
+
 
     # 주기적 업데이트
     @reactive.effect
@@ -2647,87 +2652,14 @@ def server(input, output, session):
 
 
 
-##### 원인 분석 - 불량 및 공정 에러 발생 조건
 
 
-    @output
-    @render.plot
-    def local_factor_plot():
-        df = current_data()
-        if df is None or df.empty:
-            fig, ax = plt.subplots()
-            ax.text(0.5, 0.5, "실시간 데이터 수신 대기 중...", ha="center", va="center", fontsize=13)
-            ax.axis("off")
-            return fig
+    ##### 원인 분석 - 불량 및 공정 에러 발생 조건
 
-        # 분석 대상 컬럼 선택
-        numeric_cols = df.select_dtypes(include="number").columns.tolist()
-        if not numeric_cols:
-            fig, ax = plt.subplots()
-            ax.text(0.5, 0.5, "수치형 데이터 없음", ha="center", va="center")
-            ax.axis("off")
-            return fig
-
-        # 3시그마 기반 이상 탐지
-        mean_std = df[numeric_cols].describe().T[["mean", "std"]]
-        latest = df.iloc[-1]
-        z_scores = (latest - mean_std["mean"]) / mean_std["std"]
-        z_scores = z_scores.dropna().sort_values(ascending=False)
-
-        # 시각화
-        fig, ax = plt.subplots(figsize=(8, 4))
-        colors = ["red" if abs(z) > 3 else "gray" for z in z_scores]
-        ax.barh(z_scores.index, z_scores.values, color=colors)
-        ax.set_xlabel("Z-Score (표준편차 기준)")
-        ax.set_title("실시간 이상 감지 센서 (3σ 기준)")
-        plt.tight_layout()
-        return fig
-
-
-    @output
-    @render.ui
-    def local_factor_desc():
-        df = current_data()
-        if df is None or df.empty:
-            return ui.p("⚪ 실시간 데이터 수신 중이 아닙니다.", style="color:gray;")
-
-        numeric_cols = df.select_dtypes(include="number").columns.tolist()
-        if not numeric_cols:
-            return ui.p("데이터에 수치형 센서가 없습니다.")
-
-        mean_std = df[numeric_cols].describe().T[["mean", "std"]]
-        latest = df.iloc[-1]
-
-        anomalies = []
-        for col in numeric_cols:
-            val, mean, std = latest[col], mean_std.loc[col, "mean"], mean_std.loc[col, "std"]
-            if abs(val - mean) > 3 * std:
-                anomalies.append((col, val, mean, std))
-
-        if not anomalies:
-            return ui.p("✅ 현재 이상 조건이 없습니다.", style="color:green;")
-
-        # ⚠ 이상 항목 요약
-        alerts = []
-        for col, val, mean, std in anomalies:
-            alerts.append(
-                f"<li><b>{col}</b>: 현재 {val:.2f} (평균 {mean:.2f} ± {3*std:.2f}) → <span style='color:red;'>이상 감지</span></li>"
-            )
-
-        return ui.HTML(f"""
-            <div style="background:#fff7f7; padding:10px; border-radius:8px;">
-                <p><b>⚠ 공정 이상 감지 항목 ({len(anomalies)}개)</b></p>
-                <ul>{''.join(alerts)}</ul>
-            </div>
-        """)
-
-
-
-
-    # --- 선택된 변수 저장용 reactive 변수 ---
+    # 선택된 센서 & 현재 그래프의 y라벨 순서 저장
     selected_sensor = reactive.Value(None)
+    plot_labels = reactive.Value([])   # ← barh에 그려진 y축 카테고리 순서
 
-    # --- 이상 감지 그래프 ---
     @output
     @render.plot
     def local_factor_plot():
@@ -2748,25 +2680,22 @@ def server(input, output, session):
         mean_std = df[numeric_cols].describe().T[["mean", "std"]]
         latest = df.iloc[-1]
         z_scores = (latest - mean_std["mean"]) / mean_std["std"]
-        z_scores = z_scores.dropna().sort_values(ascending=True)  # 아래→위 방향 막대
+        z_scores = z_scores.dropna().sort_values(ascending=True)
+
+        # ⬇️ 현재 그래프의 y축 카테고리 순서 저장 (index가 레이블 순서)
+        plot_labels.set(list(z_scores.index))
 
         colors = ["#e74c3c" if abs(z) > 3 else "#95a5a6" for z in z_scores]
-
         fig, ax = plt.subplots(figsize=(7, 5))
-        bars = ax.barh(z_scores.index, z_scores.values, color=colors)
+        ax.barh(range(len(z_scores)), z_scores.values, color=colors)  # ← 정수 y위치로 그림
+        ax.set_yticks(range(len(z_scores)))
+        ax.set_yticklabels(list(z_scores.index))
         ax.set_xlabel("Z-score (표준편차 기준)")
         ax.set_title("실시간 이상 감지 센서 (클릭 시 상세보기)")
         ax.grid(True, axis="x", linestyle="--", alpha=0.5)
         plt.tight_layout()
-
-        # --- 클릭 이벤트 연결용 ---
-        for bar, name in zip(bars, z_scores.index):
-            bar.set_gid(name)
-
         return fig
 
-
-    # --- 이상 요약 설명 ---
     @output
     @render.ui
     def local_factor_desc():
@@ -2780,17 +2709,19 @@ def server(input, output, session):
 
         mean_std = df[numeric_cols].describe().T[["mean", "std"]]
         latest = df.iloc[-1]
+
         anomalies = []
         for col in numeric_cols:
             val, mean, std = latest[col], mean_std.loc[col, "mean"], mean_std.loc[col, "std"]
-            if abs(val - mean) > 3 * std:
+            if pd.notna(std) and std > 0 and abs(val - mean) > 3 * std:
                 anomalies.append((col, val, mean, std))
 
         if not anomalies:
             return ui.p("✅ 현재 이상 조건이 없습니다.", style="color:green;")
 
         alerts = [
-            f"<li><b>{col}</b>: 현재 {val:.2f} (평균 {mean:.2f} ± {3*std:.2f}) → <span style='color:red;'>이상 감지</span></li>"
+            f"<li><b>{col}</b>: 현재 {val:.2f} (평균 {mean:.2f} ± {3*std:.2f}) → "
+            f"<span style='color:red;'>이상 감지</span></li>"
             for col, val, mean, std in anomalies
         ]
         return ui.HTML(f"""
@@ -2801,45 +2732,44 @@ def server(input, output, session):
             </div>
         """)
 
-
-    # --- 클릭 이벤트 처리 ---
+    # 클릭 이벤트 처리 (y좌표 → 레이블로 변환)
     @reactive.effect
     @reactive.event(input.local_factor_plot_click)
     def _handle_click():
-        click_info = input.local_factor_plot_click()
-        if not click_info:
+        click = input.local_factor_plot_click()
+        if not click:
             return
-        selected_sensor.set(click_info["domain"]["y"])  # y축 이름(센서명) 저장
 
+        # matplotlib 클릭 payload는 보통 domain.y가 실수(막대 인덱스 근처)로 옴
+        y_val = None
+        if isinstance(click, dict):
+            y_val = (click.get("domain", {}) or {}).get("y", None)
+            if y_val is None:
+                y_val = click.get("y", None)
 
-    # --- 클릭된 센서 상세 모달 ---
-    @output
-    @render.ui
-    def sensor_detail_modal():
-        sensor = selected_sensor.get()
-        if not sensor:
-            return None
+        if y_val is None:
+            return
+
+        labels = plot_labels() or []
+        idx = int(round(float(y_val)))            # 실수 → 가장 가까운 막대 인덱스
+        if idx < 0 or idx >= len(labels):
+            return
+
+        sensor = labels[idx]
+        selected_sensor.set(sensor)
 
         df = current_data()
         if df is None or df.empty or sensor not in df.columns:
-            return None
-
-        fig, ax = plt.subplots(figsize=(7, 4))
-        ax.plot(df[sensor].values[-100:], marker="o", linestyle="-", alpha=0.7)
-        ax.set_title(f"📈 센서 '{sensor}' 최근 추이 (최근 100개 샘플)")
-        ax.set_xlabel("시간순")
-        ax.set_ylabel(sensor)
-        ax.grid(True)
+            return
 
         ui.modal_show(
             ui.modal(
                 ui.output_plot("sensor_detail_plot"),
                 title=f"🔍 {sensor} 센서 상세 그래프",
                 size="l",
-                easy_close=True
+                easy_close=True,
             )
         )
-
 
     @output
     @render.plot
@@ -2852,19 +2782,26 @@ def server(input, output, session):
             ax.text(0.5, 0.5, "선택된 센서 데이터가 없습니다.", ha="center", va="center")
             return fig
 
+        y = pd.to_numeric(df[sensor], errors="coerce")
         fig, ax = plt.subplots(figsize=(7, 4))
-        ax.plot(df[sensor].values[-100:], marker="o", linestyle="-", alpha=0.7)
-        ax.set_title(f"📈 센서 '{sensor}' 최근 추이 (최근 100개 샘플)")
+        ax.plot(y.values[-100:], marker="o", linestyle="-", alpha=0.7)
+        m, s = y.mean(), y.std()
+        if pd.notna(m):
+            ax.axhline(m, color="green", linestyle="--", label="평균")
+        if pd.notna(m) and pd.notna(s):
+            ax.axhline(m + 3*s, color="red", linestyle="--", alpha=0.5, label="+3σ")
+            ax.axhline(m - 3*s, color="red", linestyle="--", alpha=0.5, label="-3σ")
+        ax.legend()
+        ax.set_title(f"📈 '{sensor}' 최근 추이 (최근 100개)")
         ax.set_xlabel("시간순")
         ax.set_ylabel(sensor)
         ax.grid(True)
         return fig
 
-
-
-
-
-
+    @output
+    @render.ui
+    def sensor_detail_modal():
+        return None
 
 
 
