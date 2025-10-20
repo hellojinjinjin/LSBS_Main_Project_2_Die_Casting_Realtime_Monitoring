@@ -831,7 +831,22 @@ def main_page(selected_tab: str):
                     ui.hr(),
                     ui.output_ui("local_factor_desc"),      # 텍스트 설명
                     ui.output_ui("sensor_detail_modal")     # 클릭 시 뜨는 모달창
-                )
+                ),
+                # ──────────────── 2행: 실시간 데이터 표 ────────────────
+                ui.card(
+                    ui.card_header("📊 실시간 데이터"),
+                    ui.div(
+                        ui.output_data_frame("recent_data_table"),
+                        # 🔹 스크롤이 생기도록 wrapping div에 명시적 width/overflow 지정
+                        style=(
+                            "width:100%; "
+                            "overflow-x:auto; overflow-y:auto; "  # 가로/세로 스크롤 모두 허용
+                            "max-height:500px; "  # 너무 길면 세로 스크롤
+                            "display:block;"
+                        )
+                    ),
+                    style="width:100%;"
+                ),
             ),
             ui.nav_panel("실시간 관리도",
                 ui.card(
