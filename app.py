@@ -892,9 +892,10 @@ def main_page(selected_tab: str):
                     ui.output_ui("local_factor_desc"),      # 텍스트 설명
                     ui.output_ui("sensor_detail_modal")     # 클릭 시 뜨는 모달창
                 ),
-
-
             ),
+
+
+
             ui.nav_panel("실시간 관리도",
                 ui.card(
                     ui.card_header(
@@ -3286,6 +3287,69 @@ def server(input, output, session):
 
 
     ##### 실시간 이상 데이터 테이블 (3시그마 or 불량만 강조 표시, 클릭 시 조건 카드 열림)
+    # @output
+    # @render.plot
+    # def local_factor_plot():
+    #     df = current_data()
+    #     if df is None or df.empty:
+    #         fig, ax = plt.subplots()
+    #         ax.text(0.5, 0.5, "실시간 데이터 수신 대기 중...", ha="center", va="center", fontsize=13)
+    #         ax.axis("off")
+    #         return fig
+
+    #     # === 1️⃣ 사용할 주요 컬럼만 선택 ===
+    #     selected_cols = [
+    #         # 공정 상태 관련
+    #         "count", "speed_ratio", "pressure_speed_ratio",
+    #         # 용융 단계
+    #         "molten_temp",
+    #         # 충진 단계
+    #         "sleeve_temperature", "EMS_operation_time",
+    #         "low_section_speed", "high_section_speed",
+    #         "molten_volume", "cast_pressure", "mold_code",
+    #         # 냉각 단계
+    #         "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+    #         "lower_mold_temp1", "lower_mold_temp2", "Coolant_temperature",
+    #         # 공정 속도 관련
+    #         "facility_operation_cycleTime", "production_cycletime",
+    #         # 품질 및 성능
+    #         "biscuit_thickness", "physical_strength",
+    #     ]
+
+    #     # 실제 df에 존재하고 수치형인 컬럼만 남김
+    #     numeric_cols = [c for c in selected_cols if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
+    #     if not numeric_cols:
+    #         fig, ax = plt.subplots()
+    #         ax.text(0.5, 0.5, "표시할 수치형 센서 데이터가 없습니다.", ha="center", va="center")
+    #         ax.axis("off")
+    #         return fig
+
+    #     # === 2️⃣ Z-score 계산 ===
+    #     mean_std = df[numeric_cols].describe().T[["mean", "std"]]
+    #     latest = df.iloc[-1]
+    #     z_scores = (latest - mean_std["mean"]) / mean_std["std"]
+    #     z_scores = z_scores.dropna().sort_values(ascending=True)
+
+    #     # 현재 그래프의 y축 카테고리 순서 저장
+    #     plot_labels.set(list(z_scores.index))
+
+    #     # === 3️⃣ 한글 라벨 매핑 ===
+    #     labels = [label_map.get(col, col) for col in z_scores.index]
+
+    #     # === 4️⃣ 그래프 ===
+    #     colors = ["#e74c3c" if abs(z) > 3 else "#95a5a6" for z in z_scores]
+    #     fig, ax = plt.subplots(figsize=(7, 5))
+    #     ax.barh(range(len(z_scores)), z_scores.values, color=colors)
+    #     ax.set_yticks(range(len(z_scores)))
+    #     ax.set_yticklabels(labels)
+    #     ax.set_xlabel("Z-score (표준편차 기준)")
+    #     ax.set_title("실시간 이상 감지 센서 (클릭 시 상세보기)")
+    #     ax.grid(True, axis="x", linestyle="--", alpha=0.5)
+    #     plt.tight_layout()
+    #     return fig
+
+
+    # ✅ 기존 local_factor_plot(실시간용) 교체
     @output
     @render.plot
     def local_factor_plot():
@@ -3296,26 +3360,18 @@ def server(input, output, session):
             ax.axis("off")
             return fig
 
-        # === 1️⃣ 사용할 주요 컬럼만 선택 ===
+        # 1) 사용할 주요 컬럼만 (UI에 있는 것만)
         selected_cols = [
-            # 공정 상태 관련
             "count", "speed_ratio", "pressure_speed_ratio",
-            # 용융 단계
             "molten_temp",
-            # 충진 단계
             "sleeve_temperature", "EMS_operation_time",
             "low_section_speed", "high_section_speed",
             "molten_volume", "cast_pressure", "mold_code",
-            # 냉각 단계
             "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
             "lower_mold_temp1", "lower_mold_temp2", "Coolant_temperature",
-            # 공정 속도 관련
             "facility_operation_cycleTime", "production_cycletime",
-            # 품질 및 성능
             "biscuit_thickness", "physical_strength",
         ]
-
-        # 실제 df에 존재하고 수치형인 컬럼만 남김
         numeric_cols = [c for c in selected_cols if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
         if not numeric_cols:
             fig, ax = plt.subplots()
@@ -3323,29 +3379,38 @@ def server(input, output, session):
             ax.axis("off")
             return fig
 
-        # === 2️⃣ Z-score 계산 ===
+        # 2) Z-score
         mean_std = df[numeric_cols].describe().T[["mean", "std"]]
         latest = df.iloc[-1]
-        z_scores = (latest - mean_std["mean"]) / mean_std["std"]
+        z_scores = (latest[numeric_cols] - mean_std["mean"]) / mean_std["std"]
         z_scores = z_scores.dropna().sort_values(ascending=True)
 
-        # 현재 그래프의 y축 카테고리 순서 저장
+        # y축 라벨 순서 저장(클릭 처리용)
         plot_labels.set(list(z_scores.index))
 
-        # === 3️⃣ 한글 라벨 매핑 ===
-        labels = [label_map.get(col, col) for col in z_scores.index]
+        # 3) 강도별 색상: |z|>2.5=빨강, |z|>1.5=노랑, else=회색
+        colors = []
+        for z in z_scores.values:
+            if abs(z) > 2.5:
+                colors.append("#e74c3c")   # 강한 이상
+            elif abs(z) > 1.5:
+                colors.append("#f1c40f")   # 주의
+            else:
+                colors.append("#95a5a6")   # 정상
 
-        # === 4️⃣ 그래프 ===
-        colors = ["#e74c3c" if abs(z) > 3 else "#95a5a6" for z in z_scores]
+        # 4) 한글 레이블
+        ylabels = [label_map.get(c, c) for c in z_scores.index]
+
         fig, ax = plt.subplots(figsize=(7, 5))
         ax.barh(range(len(z_scores)), z_scores.values, color=colors)
         ax.set_yticks(range(len(z_scores)))
-        ax.set_yticklabels(labels)
+        ax.set_yticklabels(ylabels)
         ax.set_xlabel("Z-score (표준편차 기준)")
         ax.set_title("실시간 이상 감지 센서 (클릭 시 상세보기)")
         ax.grid(True, axis="x", linestyle="--", alpha=0.5)
         plt.tight_layout()
         return fig
+
 
 
 
