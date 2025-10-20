@@ -2587,21 +2587,6 @@ def server(input, output, session):
 
 
 
-    # @output
-    # @render.data_frame
-    # def recent_data_table():
-    #     df = current_data()
-    #     if df is None or df.empty:
-    #         return pd.DataFrame({"데이터": ["현재 수신된 데이터가 없습니다."]})
-
-    #     df = df.copy().round(2).fillna("-")
-
-    #     # ✅ 컬럼명을 한글로 매핑
-    #     inv_label_map = label_map  # 그대로 사용해도 됨
-    #     df.rename(columns=inv_label_map, inplace=True)
-
-    #     return df.reset_index(drop=True)
-
 
     @output
     @render.data_frame
@@ -2611,6 +2596,10 @@ def server(input, output, session):
             return pd.DataFrame({"알림": ["현재 수신된 데이터가 없습니다."]})
 
         data = df.copy()
+
+        # ✅ 2.5) passorfail 컬럼을 사람이 보기 좋게 한글 변환
+        if "passorfail" in data.columns:
+            data["passorfail"] = data["passorfail"].map({0: "양품", 1: "불량"}).fillna(data["passorfail"])
 
         # 1) 3시그마 이상치 행 찾기
         numeric_cols = data.select_dtypes(include="number").columns.tolist()
@@ -3147,6 +3136,7 @@ def server(input, output, session):
         plt.tight_layout()
         return fig
 
+
     @output
     @render.ui
     def local_factor_desc():
@@ -3154,10 +3144,30 @@ def server(input, output, session):
         if df is None or df.empty:
             return ui.p("⚪ 실시간 데이터 수신 중이 아닙니다.", style="color:gray;")
 
-        numeric_cols = df.select_dtypes(include="number").columns.tolist()
-        if not numeric_cols:
-            return ui.p("데이터에 수치형 센서가 없습니다.")
+        # === 1️⃣ 사용할 주요 컬럼만 선택 ===
+        selected_cols = [
+            # 공정 상태 관련
+            "count", "speed_ratio", "pressure_speed_ratio",
+            # 용융 단계
+            "molten_temp",
+            # 충진 단계
+            "sleeve_temperature", "EMS_operation_time",
+            "low_section_speed", "high_section_speed",
+            "molten_volume", "cast_pressure", "mold_code",
+            # 냉각 단계
+            "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+            "lower_mold_temp1", "lower_mold_temp2", "Coolant_temperature",
+            # 공정 속도 관련
+            "facility_operation_cycleTime", "production_cycletime",
+            # 품질 및 성능
+            "biscuit_thickness", "physical_strength",
+        ]
 
+        numeric_cols = [c for c in selected_cols if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
+        if not numeric_cols:
+            return ui.p("⚪ 표시할 수치형 센서가 없습니다.", style="color:gray;")
+
+        # === 2️⃣ Z-score 기반 이상 감지 ===
         mean_std = df[numeric_cols].describe().T[["mean", "std"]]
         latest = df.iloc[-1]
 
@@ -3170,11 +3180,14 @@ def server(input, output, session):
         if not anomalies:
             return ui.p("✅ 현재 이상 조건이 없습니다.", style="color:green;")
 
+        # === 3️⃣ 한글 라벨 적용 ===
         alerts = [
-            f"<li><b>{col}</b>: 현재 {val:.2f} (평균 {mean:.2f} ± {3*std:.2f}) → "
-            f"<span style='color:red;'>이상 감지</span></li>"
+            f"<li><b>{label_map.get(col, col)}</b>: 현재 {val:.2f} "
+            f"(평균 {mean:.2f} ± {3*std:.2f}) → <span style='color:red;'>이상 감지</span></li>"
             for col, val, mean, std in anomalies
         ]
+
+        # === 4️⃣ UI 렌더링 ===
         return ui.HTML(f"""
             <div style="background:#fff7f7; padding:10px; border-radius:8px;">
                 <p><b>⚠ 공정 이상 감지 항목 ({len(anomalies)}개)</b></p>
@@ -3182,6 +3195,9 @@ def server(input, output, session):
                 <p style='color:gray;font-size:13px;'>그래프를 클릭하면 상세 추이를 볼 수 있습니다.</p>
             </div>
         """)
+
+
+
 
     # 클릭 이벤트 처리 (y좌표 → 레이블로 변환)
     @reactive.effect
@@ -3191,18 +3207,18 @@ def server(input, output, session):
         if not click:
             return
 
-        # matplotlib 클릭 payload는 보통 domain.y가 실수(막대 인덱스 근처)로 옴
+        # y좌표값(실수형)을 가져오기
         y_val = None
         if isinstance(click, dict):
             y_val = (click.get("domain", {}) or {}).get("y", None)
             if y_val is None:
                 y_val = click.get("y", None)
-
         if y_val is None:
             return
 
+        # 그래프의 y라벨 순서와 매칭
         labels = plot_labels() or []
-        idx = int(round(float(y_val)))            # 실수 → 가장 가까운 막대 인덱스
+        idx = int(round(float(y_val)))
         if idx < 0 or idx >= len(labels):
             return
 
@@ -3213,10 +3229,13 @@ def server(input, output, session):
         if df is None or df.empty or sensor not in df.columns:
             return
 
+        # 한글 센서명으로 제목 표시
+        sensor_name = label_map.get(sensor, sensor)
+
         ui.modal_show(
             ui.modal(
                 ui.output_plot("sensor_detail_plot"),
-                title=f"🔍 {sensor} 센서 상세 그래프",
+                title=f"🔍 {sensor_name} 센서 상세 그래프",
                 size="l",
                 easy_close=True,
             )
@@ -3233,19 +3252,25 @@ def server(input, output, session):
             ax.text(0.5, 0.5, "선택된 센서 데이터가 없습니다.", ha="center", va="center")
             return fig
 
+        # 한글 센서명 매핑
+        sensor_name = label_map.get(sensor, sensor)
+
         y = pd.to_numeric(df[sensor], errors="coerce")
+        y = y.dropna()
         fig, ax = plt.subplots(figsize=(7, 4))
         ax.plot(y.values[-100:], marker="o", linestyle="-", alpha=0.7)
+
         m, s = y.mean(), y.std()
         if pd.notna(m):
             ax.axhline(m, color="green", linestyle="--", label="평균")
         if pd.notna(m) and pd.notna(s):
             ax.axhline(m + 3*s, color="red", linestyle="--", alpha=0.5, label="+3σ")
             ax.axhline(m - 3*s, color="red", linestyle="--", alpha=0.5, label="-3σ")
+
         ax.legend()
-        ax.set_title(f"📈 '{sensor}' 최근 추이 (최근 100개)")
+        ax.set_title(f"📈 '{sensor_name}' 최근 추이 (최근 100개)")
         ax.set_xlabel("시간순")
-        ax.set_ylabel(sensor)
+        ax.set_ylabel(sensor_name)
         ax.grid(True)
         return fig
 
@@ -3258,61 +3283,66 @@ def server(input, output, session):
 
     ##### 실시간 이상 데이터 테이블 (3시그마 or 불량만 강조 표시, 클릭 시 조건 카드 열림)
     @output
-    @render.ui
-    def realtime_table():
+    @render.plot
+    def local_factor_plot():
         df = current_data()
         if df is None or df.empty:
-            return ui.p("⚪ 실시간 데이터 수신 대기 중...", style="color:gray;")
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "실시간 데이터 수신 대기 중...", ha="center", va="center", fontsize=13)
+            ax.axis("off")
+            return fig
 
-        numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        # === 1️⃣ 사용할 주요 컬럼만 선택 ===
+        selected_cols = [
+            # 공정 상태 관련
+            "count", "speed_ratio", "pressure_speed_ratio",
+            # 용융 단계
+            "molten_temp",
+            # 충진 단계
+            "sleeve_temperature", "EMS_operation_time",
+            "low_section_speed", "high_section_speed",
+            "molten_volume", "cast_pressure", "mold_code",
+            # 냉각 단계
+            "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+            "lower_mold_temp1", "lower_mold_temp2", "Coolant_temperature",
+            # 공정 속도 관련
+            "facility_operation_cycleTime", "production_cycletime",
+            # 품질 및 성능
+            "biscuit_thickness", "physical_strength",
+        ]
+
+        # 실제 df에 존재하고 수치형인 컬럼만 남김
+        numeric_cols = [c for c in selected_cols if c in df.columns and pd.api.types.is_numeric_dtype(df[c])]
         if not numeric_cols:
-            return ui.p("데이터에 수치형 센서가 없습니다.")
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "표시할 수치형 센서 데이터가 없습니다.", ha="center", va="center")
+            ax.axis("off")
+            return fig
 
+        # === 2️⃣ Z-score 계산 ===
         mean_std = df[numeric_cols].describe().T[["mean", "std"]]
         latest = df.iloc[-1]
         z_scores = (latest - mean_std["mean"]) / mean_std["std"]
-        anomaly_cols = z_scores[abs(z_scores) > 3].index.tolist()
+        z_scores = z_scores.dropna().sort_values(ascending=True)
 
-        fail_df = df[df["passorfail"].astype(str).str.lower().isin(["fail", "불량", "ng"])]
+        # 현재 그래프의 y축 카테고리 순서 저장
+        plot_labels.set(list(z_scores.index))
 
-        if anomaly_cols:
-            anomaly_df = df.tail(10).copy()
-            anomaly_df = anomaly_df[["timestamp"] + anomaly_cols]
-            anomaly_df["이상항목"] = ", ".join(anomaly_cols)
-        else:
-            anomaly_df = pd.DataFrame(columns=["timestamp", "이상항목"])
+        # === 3️⃣ 한글 라벨 매핑 ===
+        labels = [label_map.get(col, col) for col in z_scores.index]
 
-        merged = pd.concat([fail_df.tail(10), anomaly_df], axis=0)
-        merged = merged.tail(10).fillna("")
-        merged.reset_index(drop=True, inplace=True)
+        # === 4️⃣ 그래프 ===
+        colors = ["#e74c3c" if abs(z) > 3 else "#95a5a6" for z in z_scores]
+        fig, ax = plt.subplots(figsize=(7, 5))
+        ax.barh(range(len(z_scores)), z_scores.values, color=colors)
+        ax.set_yticks(range(len(z_scores)))
+        ax.set_yticklabels(labels)
+        ax.set_xlabel("Z-score (표준편차 기준)")
+        ax.set_title("실시간 이상 감지 센서 (클릭 시 상세보기)")
+        ax.grid(True, axis="x", linestyle="--", alpha=0.5)
+        plt.tight_layout()
+        return fig
 
-        if merged.empty:
-            return ui.p("✅ 현재 이상 조건이 없습니다.", style="color:green;")
-
-        # ✅ 행 클릭 시 selected_row로 전달 (그래프 고정용)
-        html_rows = ""
-        for i, row in merged.iterrows():
-            is_fail = str(row.get("passorfail", "")).lower() in ["fail", "불량", "ng"]
-            row_color = "#ffe6e6" if is_fail else "#ffffff"
-            html_rows += (
-                f"<tr style='background:{row_color}; cursor:pointer;' "
-                f"onclick=\"Shiny.setInputValue('selected_row', {i}, {{priority: 'event'}});\">"
-            )
-            for val in row.values:
-                html_rows += f"<td style='padding:4px 8px; border-bottom:1px solid #ddd;'>{val}</td>"
-            html_rows += "</tr>"
-
-        html_table = f"""
-        <div style="max-height:300px; overflow:auto; border:1px solid #ccc; border-radius:8px;">
-            <table style="width:100%; border-collapse:collapse; font-size:13px;">
-                <thead style="background:#f6f6f6;">
-                    <tr>{''.join(f'<th style="padding:6px 8px; border-bottom:2px solid #999;">{col}</th>' for col in merged.columns)}</tr>
-                </thead>
-                <tbody>{html_rows}</tbody>
-            </table>
-        </div>
-        """
-        return ui.HTML(html_table)
 
 
     @reactive.effect
