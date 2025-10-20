@@ -838,7 +838,38 @@ def field_dashboard_ui():
             ui.output_ui("realtime_predict_card"),  # 🧠 추가
         ),
             ui.card(
-                ui.card_header("🧩 주조 공정 실시간 상태"),
+                ui.card_header(
+                    ui.div(
+                        {"style": "display:flex; justify-content:space-between; align-items:center;"},
+                        # 왼쪽: 제목
+                        ui.span("🧭 주조 공정 실시간 상태", style="font-weight:700; font-size:16px;"),
+
+                        # 오른쪽: 범례
+                        ui.div(
+                            {"style": "display:flex; gap:10px; align-items:center; font-size:13px;"},
+                            ui.div(
+                                {"style": "display:flex; align-items:center; gap:4px;"},
+                                ui.div({"style": "width:12px; height:12px; background:#00C853; border-radius:2px;"}),
+                                "정상"
+                            ),
+                            ui.div(
+                                {"style": "display:flex; align-items:center; gap:4px;"},
+                                ui.div({"style": "width:12px; height:12px; background:#FFD600; border-radius:2px;"}),
+                                "주의"
+                            ),
+                            ui.div(
+                                {"style": "display:flex; align-items:center; gap:4px;"},
+                                ui.div({"style": "width:12px; height:12px; background:#FB8C00; border-radius:2px;"}),
+                                "경고"
+                            ),
+                            ui.div(
+                                {"style": "display:flex; align-items:center; gap:4px;"},
+                                ui.div({"style": "width:12px; height:12px; background:#E53935; border-radius:2px;"}),
+                                "이상"
+                            ),
+                        ),
+                    )
+                ),
                 ui.output_ui("process_svg_inline"),
                 style="width:100%;"
             ),
