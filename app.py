@@ -25,6 +25,22 @@ import plotly.graph_objects as go
 from fpdf import FPDF
 import datetime
 
+# ==========================================
+# 🔹 Baseline UCL 계산 함수 (고정형 관리도용)
+# ==========================================
+from scipy.stats import f
+
+def calc_baseline_ucl(train_df, cols):
+    """Train 데이터 기반 UCL, mean, inv_cov 계산"""
+    X = train_df[cols].dropna().values
+    n, p = X.shape
+    mean = np.mean(X, axis=0)
+    cov = np.cov(X, rowvar=False)
+    inv_cov = np.linalg.pinv(cov)
+    UCL = p * (n - 1) * (n + 1) / (n * (n - p)) * f.ppf(0.99, p, n - p)
+    print(f"✅ Baseline UCL({cols[0][:6]}...) 계산 완료: {UCL:.3f}")
+    return UCL, mean, inv_cov
+
 # ✅ 표시에서 제외할 컬럼
 EXCLUDE_COLS = ["id", "line", "name", "mold_name", "date", "time", "registration_time", "count"]
 
@@ -102,6 +118,29 @@ VAR_POSITIONS = {
     
     "mold_code": (350, 480),
 }
+
+# ==========================================
+# 🔹 Train 데이터 로딩 및 공정별 UCL 기준 계산
+# ==========================================
+train_df = pd.read_csv("./data/fin_train.csv")
+train_df.columns = [c.strip() for c in train_df.columns]
+
+# 공정별 변수 리스트
+melting_cols = ["molten_temp", "molten_volume"]
+filling_cols = ["sleeve_temperature", "EMS_operation_time", "low_section_speed",
+                "high_section_speed", "cast_pressure"]
+cooling_cols = ["upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+                "lower_mold_temp1", "lower_mold_temp2",
+                "Coolant_temperature"]
+speed_cols = ["facility_operation_cycleTime", "production_cycletime"]
+quality_cols = ["biscuit_thickness", "physical_strength"]
+
+# 단계별 기준값 계산 (한 번만 수행)
+UCL_MELT, MEAN_MELT, INV_MELT = calc_baseline_ucl(train_df, melting_cols)
+UCL_FILL, MEAN_FILL, INV_FILL = calc_baseline_ucl(train_df, filling_cols)
+UCL_COOL, MEAN_COOL, INV_COOL = calc_baseline_ucl(train_df, cooling_cols)
+UCL_SPEED, MEAN_SPEED, INV_SPEED = calc_baseline_ucl(train_df, speed_cols)
+UCL_QUAL, MEAN_QUAL, INV_QUAL = calc_baseline_ucl(train_df, quality_cols)
 
 # ===== 백엔드 및 폰트 설정 =====
 matplotlib.use("Agg")  # Tkinter 대신 Agg backend 사용 (GUI 불필요)
@@ -763,13 +802,13 @@ def make_dynamic_svg(sensor_list: list[str]) -> str:
 
 def plan_page_ui():
     """생산계획 탭의 UI를 반환하는 함수"""
-    years = list(range(datetime.date.today().year, datetime.date.today().year + 3))
+    years = list(range(datetime.date(2019, 1, 19).year, datetime.date(2019, 1, 19).year + 3))
     months = list(range(1, 13))
     return ui.layout_sidebar(
         ui.sidebar(
             ui.input_numeric("monthly_target", "이달의 총 생산 목표 수", value=20000, min=1000, step=1000),
-            ui.input_select("year", "연도 선택", {str(y): str(y) for y in years}, selected=str(datetime.date.today().year)),
-            ui.input_select("month", "월 선택", {str(m): f"{m}월" for m in months}, selected=str(datetime.date.today().month)),
+            ui.input_select("year", "연도 선택", {str(y): str(y) for y in years}, selected=str(datetime.date(2019, 1, 19).year)),
+            ui.input_select("month", "월 선택", {str(m): f"{m}월" for m in months}, selected=str(datetime.date(2019, 1, 19).month)),
             ui.output_ui("mold_inputs"),
             ui.output_text("remaining_qty"),
             ui.input_action_button("run_plan", "시뮬레이션 실행", class_="btn btn-primary"),
@@ -804,14 +843,14 @@ def main_page(selected_tab: str):
 
     # ───────── 이번달 생산목표 ─────────
     ui.nav_panel(
-    "이달의 생산목표",
+    "생산현황",
     ui.layout_sidebar(
         ui.sidebar(
-            ui.input_date("ref_date", "조회 기준일", value=datetime.date.today()),
+            ui.input_date("ref_date", "조회 기준일", value=datetime.date(2019, 1, 19)),
             style="background-color:#fffaf2; padding:20px; border-radius:10px;"
         ),
         ui.card(
-            ui.card_header("📅 이번달 생산 현황"),
+            ui.card_header("📅 생산 현황"),
             ui.output_ui("calendar_view_current"),
             ui.hr(),
             ui.output_text("daily_summary"),   # ← 누적/예상 표시
@@ -822,7 +861,7 @@ def main_page(selected_tab: str):
 
     # ───────── 다음달 생산목표 ─────────
     ui.nav_panel(
-        "다음달의 생산목표",
+        "생산목표",
         plan_page_ui()  # ✅ 기존의 시뮬레이션 탭
     ),
 ),
@@ -1316,7 +1355,7 @@ def server(input, output, session):
     fin_all = fin_all.dropna(subset=["real_time"]).copy()
 
     # 날짜 변환 (2019 → 2025년 10월)
-    fin_all["real_time"] = fin_all["real_time"] + pd.DateOffset(years=6, months=9)
+    fin_all["real_time"] = fin_all["real_time"] 
     fin_all["date"] = fin_all["real_time"].dt.floor("D")
 
     # =====================================================
@@ -1326,7 +1365,7 @@ def server(input, output, session):
     def calendar_view_current():
         ref_date_str = input.ref_date() or None
         if not ref_date_str:
-            ref_date = datetime.date.today()
+            ref_date = datetime.date(2019, 1, 19)
         else:
             ref_date = pd.to_datetime(ref_date_str).date()
 
@@ -1407,7 +1446,8 @@ def server(input, output, session):
     def daily_summary():
         ref_date_str = input.ref_date() or None
         if not ref_date_str:
-            ref_date = datetime.date.today()
+            ref_date = datetime.date(2019, 1, 19)
+
         else:
             ref_date = pd.to_datetime(ref_date_str).normalize()
 
@@ -1556,16 +1596,34 @@ def server(input, output, session):
     @output
     @render.ui
     def calendar_view():
-        df = plan_df.get()   # ✅ ← 여기 들여쓰기 맞춰줘야 함 (함수 안)
+        df = plan_df()
         if df.empty:
             return ui.p("시뮬레이션 실행 버튼을 눌러주세요.", style="text-align:center; color:grey;")
+
+        # ✅ 영어 변수명 → 한글 매핑
+        label_map = {
+            "molten_temp": "용탕 온도",
+            "upper_mold_temp1": "상금형 온도1",
+            "upper_mold_temp2": "상금형 온도2",
+            "upper_mold_temp3": "상금형 온도3",
+            "lower_mold_temp1": "하금형 온도1",
+            "lower_mold_temp2": "하금형 온도2",
+            "lower_mold_temp3": "하금형 온도3",
+            "sleeve_temperature": "슬리브 온도",
+            "cast_pressure": "주조 압력",
+            "biscuit_thickness": "비스킷 두께",
+            "physical_strength": "인장 강도",
+            "Coolant_temperature": "냉각수 온도",
+        }
 
         year, month = int(input.year()), int(input.month())
         cal = calendar.monthcalendar(year, month)
         days_kr = ["일", "월", "화", "수", "목", "금", "토"]
 
         html = '<div style="display:grid; grid-template-columns: 80px repeat(7, 1fr); gap:4px;">'
-        html += '<div></div>' + "".join([f"<div style='font-weight:bold; text-align:center;'>{d}</div>" for d in days_kr])
+        html += '<div></div>' + "".join(
+            [f"<div style='font-weight:bold; text-align:center;'>{d}</div>" for d in days_kr]
+        )
 
         for w_i, week in enumerate(cal, start=1):
             html += f"<div style='font-weight:bold;'>{w_i}주</div>"
@@ -1586,7 +1644,8 @@ def server(input, output, session):
                             else:
                                 settings = row.to_dict("records")[0]
                                 rows_html = "".join([
-                                    f"<tr><td>{k}</td><td>{v:.2f}</td></tr>"
+                                    # ✅ 영어 대신 한글 출력
+                                    f"<tr><td>{label_map.get(k, k)}</td><td>{v:.2f}</td></tr>"
                                     for k, v in settings.items() if k != "mold_code"
                                 ])
                                 tooltip_html = f"""
@@ -1611,6 +1670,7 @@ def server(input, output, session):
 
         html += "</div>"
         return ui.HTML(html)
+
 
 
 
@@ -1718,23 +1778,35 @@ def server(input, output, session):
     # 🧭 다변량 관리도 (Hotelling’s T²) 계산 함수
     # ============================================================
     def calc_hotelling_t2(df, cols):
-        """Hotelling's T² 통계량 계산"""
+        """Hotelling’s T² (고정 UCL 적용)"""
         df = df.dropna(subset=cols)
-        if len(df) < 5:
+        if len(df) == 0:
             return None, None, None
+
         X = df[cols].values
-        mean = np.mean(X, axis=0)
-        cov = np.cov(X, rowvar=False)
 
-        try:
-            inv_cov = np.linalg.inv(cov)
-        except np.linalg.LinAlgError:
+        # ✅ 공정별 baseline 매칭
+        if set(cols) == set(melting_cols):
+            mean, inv_cov, UCL = MEAN_MELT, INV_MELT, UCL_MELT
+        elif set(cols) == set(filling_cols):
+            mean, inv_cov, UCL = MEAN_FILL, INV_FILL, UCL_FILL
+        elif all(c in cooling_cols for c in cols):
+            mean, inv_cov, UCL = MEAN_COOL, INV_COOL, UCL_COOL
+        elif set(cols) == set(speed_cols):
+            mean, inv_cov, UCL = MEAN_SPEED, INV_SPEED, UCL_SPEED
+        elif set(cols) == set(quality_cols):
+            mean, inv_cov, UCL = MEAN_QUAL, INV_QUAL, UCL_QUAL
+        else:
+            print("⚠ 알 수 없는 컬럼 세트, 실시간 UCL 계산으로 fallback")
+            mean = np.mean(X, axis=0)
+            cov = np.cov(X, rowvar=False)
             inv_cov = np.linalg.pinv(cov)
+            from scipy.stats import f
+            n, p = len(df), len(cols)
+            UCL = p * (n - 1) * (n + 1) / (n * (n - p)) * f.ppf(0.99, p, n - p)
 
+        # ✅ T² 계산
         T2 = np.array([(x - mean) @ inv_cov @ (x - mean).T for x in X])
-        n, p = len(df), len(cols)
-        from scipy.stats import f
-        UCL = p * (n - 1) * (n + 1) / (n * (n - p)) * f.ppf(0.99, p, n - p)
         return df.index, T2, UCL
 
 
@@ -1905,11 +1977,11 @@ def server(input, output, session):
 
             # ✅ (추가) 한글 컬럼명을 영어로 자동 되돌리기
             reverse_map = {v: k for k, v in label_map.items()}
-            df.rename(columns=reverse_map, inplace=True)
+            df = df.rename(columns=reverse_map)
 
             cols = [
                 "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
-                "lower_mold_temp1", "lower_mold_temp2", "lower_mold_temp3",
+                "lower_mold_temp1", "lower_mold_temp2", 
                 "Coolant_temperature"
             ]
 
@@ -1938,7 +2010,7 @@ def server(input, output, session):
     
             cols = [
                 "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
-                "lower_mold_temp1", "lower_mold_temp2", "lower_mold_temp3",
+                "lower_mold_temp1", "lower_mold_temp2",
                 "Coolant_temperature"
             ]
     
