@@ -386,6 +386,40 @@ card_click_css = """
 train = pd.read_csv("./data/train_raw.csv")
 train["time"] = pd.to_datetime(train["time"], errors="coerce")
 train["day"] = train["time"].dt.date
+
+# ======== 생산 목표 비교용 데이터 추가 ========
+try:
+    actual_df = pd.read_csv("./data/fin_test.csv")
+    target_df = pd.read_csv("./data/daily_target_plan_v2.csv")
+    actual_df["date"] = pd.to_datetime(actual_df["date"], errors="coerce")
+    target_df["date"] = pd.to_datetime(target_df["date"], errors="coerce")
+
+    # 날짜별 합산
+    daily_actual = (
+        actual_df.groupby(["date"])["count"]
+        .sum()
+        .reset_index(name="actual_prod")
+    )
+    daily_target = (
+        target_df.groupby(["date"])["target_daily"]
+        .sum()
+        .reset_index(name="target_prod")
+    )
+
+    # 병합 및 누적 계산
+    merged = pd.merge(daily_target, daily_actual, on="date", how="left").fillna(0)
+    merged["cumulative_actual"] = merged["actual_prod"].cumsum()
+    merged["cumulative_target"] = merged["target_prod"].cumsum()
+    merged["achieve_rate(%)"] = (
+        merged["cumulative_actual"] / merged["cumulative_target"]
+    ) * 100
+
+    monthly_merged = merged.copy()
+    print("[✅ 생산목표 데이터 병합 완료]")
+except Exception as e:
+    print("⚠️ 생산목표 데이터 병합 실패:", e)
+    monthly_merged = pd.DataFrame()
+
 # 몰드코드별 요약
 mold_cycle = (
     train.groupby("mold_code")["facility_operation_cycleTime"]
@@ -800,9 +834,7 @@ def main_page(selected_tab: str):
     "이달의 생산목표",
     ui.layout_sidebar(
         ui.sidebar(
-            ui.input_numeric("monthly_target_cur", "이번달 목표 생산량", value=20000, min=0, step=100),
-            ui.input_date("selected_day", "조회 기준일", value=datetime.date.today()),
-            ui.input_action_button("refresh_actual", "갱신", class_="btn-primary"),
+            ui.input_date("ref_date", "조회 기준일", value=datetime.date.today()),
             style="background-color:#fffaf2; padding:20px; border-radius:10px;"
         ),
         ui.card(
@@ -1232,83 +1264,149 @@ def server(input, output, session):
 # 🟢 TAB1. 현장 관리 (최신 Shiny 버전 호환)
 # ============================================================
 
+    # =====================================================
+    # ✅ 데이터 로드 및 전처리
+    # =====================================================
+    train_raw = pd.read_csv("./data/train_raw.csv", low_memory=False)
+    fin_test = pd.read_csv("./data/fin_test.csv", low_memory=False)
+
+    for df in [train_raw, fin_test]:
+        if "real_time" not in df.columns and "date" in df.columns and "time" in df.columns:
+            df["real_time"] = pd.to_datetime(df["date"].astype(str) + " " + df["time"].astype(str), errors="coerce")
+
+    common_cols = [c for c in train_raw.columns if c in fin_test.columns]
+    fin_all = pd.concat([train_raw[common_cols], fin_test[common_cols]], ignore_index=True)
+
+    # real_time 변환 (NaT 제거)
+    fin_all["real_time"] = pd.to_datetime(fin_all["real_time"], errors="coerce")
+    fin_all = fin_all.dropna(subset=["real_time"]).copy()
+
+    # 날짜 변환 (2019 → 2025년 10월)
+    fin_all["real_time"] = fin_all["real_time"] + pd.DateOffset(years=6, months=9)
+    fin_all["date"] = fin_all["real_time"].dt.floor("D")
+
+    # =====================================================
+    # 📅 달력 렌더링 (선택한 달 기준으로 표시)
+    # =====================================================
     @render.ui
-    @reactive.event(input.refresh_actual)
     def calendar_view_current():
-        """이번 달 생산 달력 표시"""
-        today = datetime.date.today()
-        year, month = today.year, today.month
-        selected_day = input.selected_day()
-        target = input.monthly_target_cur()
+        ref_date_str = input.ref_date() or None
+        if not ref_date_str:
+            ref_date = datetime.date.today()
+        else:
+            ref_date = pd.to_datetime(ref_date_str).date()
 
-        df_actual = train.copy()
-        df_actual["time"] = pd.to_datetime(df_actual["time"], errors="coerce")
-        df_actual["date"] = df_actual["time"].dt.date
-        daily_actual = (
-            df_actual.groupby("date")["count"]
-            .agg(["min", "max"])
-            .reset_index()
-        )
-        daily_actual["daily_prod"] = daily_actual["max"] - daily_actual["min"] + 1
+        year, month = ref_date.year, ref_date.month
+        total_days_in_month = calendar.monthrange(year, month)[1]
 
-        produced = daily_actual.loc[daily_actual["date"] <= selected_day, "daily_prod"].sum()
-        remaining_days = (calendar.monthrange(year, month)[1] - selected_day.day)
-        remaining_target = max(target - produced, 0)
-        needed_daily = remaining_target / remaining_days if remaining_days > 0 else 0
+        # 이번 달 데이터 필터링
+        df_month = fin_all[
+            (fin_all["real_time"].dt.year == year) &
+            (fin_all["real_time"].dt.month == month)
+        ].copy()
 
-        cal = calendar.monthcalendar(year, month)
-        days_kr = ["일", "월", "화", "수", "목", "금", "토"]
-        html = '<div style="display:grid; grid-template-columns: 80px repeat(7, 1fr); gap:4px;">'
-        html += '<div></div>' + "".join([f"<div style='font-weight:bold; text-align:center;'>{d}</div>" for d in days_kr])
+        if df_month.empty:
+            return ui.HTML(f"<p>⚠️ {year}년 {month}월 데이터 없음</p>")
 
-        for w_i, week in enumerate(cal, start=1):
-            html += f"<div style='font-weight:bold;'>{w_i}주</div>"
-            for d in week:
-                if d == 0:
-                    html += "<div style='border:1px solid #ccc; min-height:80px; background:#f9f9f9;'></div>"
-                else:
-                    cell_date = datetime.date(year, month, d)
-                    cell_df = daily_actual[daily_actual["date"] == cell_date]
-                    if not cell_df.empty:
-                        qty = cell_df["daily_prod"].values[0]
-                        color = "#28a745" if cell_date <= selected_day else "#6c757d"
-                        html += f"<div style='border:1px solid #ccc; min-height:80px; padding:4px; color:{color}; font-weight:bold;'>{d}<br>{qty}</div>"
+        # 날짜별 생산량 계산
+        daily_df = df_month.groupby("date").size().reset_index(name="daily_prod")
+
+        # 하루 평균 및 목표 계산
+        total_rows = daily_df["daily_prod"].sum()
+        unique_days = daily_df["date"].nunique()
+        avg_daily = total_rows / unique_days
+        daily_target = avg_daily
+        monthly_target = daily_target * total_days_in_month 
+
+        # 누적 계산
+        daily_df = daily_df.sort_values("date")
+        daily_df["cum_prod"] = daily_df["daily_prod"].cumsum()
+        daily_df["achieve_rate(%)"] = (daily_df["cum_prod"] / monthly_target * 100).round(1)
+
+        produced = daily_df[daily_df["date"] <= pd.Timestamp(ref_date)]["daily_prod"].sum()
+        achieve_rate = (produced / monthly_target) * 100
+        remaining = max(monthly_target - produced, 0)
+        last_day = datetime.date(year, month, total_days_in_month)
+        remaining_days = max((last_day - ref_date).days, 0)
+        daily_need = round(remaining / remaining_days, 1) if remaining_days > 0 else 0
+
+        # 달력 UI
+        cal = calendar.Calendar(firstweekday=6)
+        month_days = cal.monthdatescalendar(year, month)
+
+        html = ["<table style='width:100%; text-align:center; border-collapse:collapse;'>"]
+        html.append("<tr>" + "".join(f"<th>{d}</th>" for d in ["일","월","화","수","목","금","토"]) + "</tr>")
+
+        for week in month_days:
+            html.append("<tr>")
+            for day in week:
+                if day.month != month:
+                    html.append("<td style='background:#efefef;'></td>")
+                    continue
+
+                row = daily_df[daily_df["date"].dt.date == day]
+                if day <= ref_date:
+                    if not row.empty:
+                        prod = int(row["daily_prod"].values[0])
+                        rate = (prod / daily_target) * 100
+                        bg = "#c7f9cc" if rate >= 100 else "#fff3b0" if rate >= 80 else "#ffcccb"
+                        html.append(
+                            f"<td style='border:1px solid #ddd; height:70px; background:{bg};'>"
+                            f"<b>{day.day}</b><br>{prod:,}ea<br>({rate:.1f}%)</td>"
+                        )
                     else:
-                        html += f"<div style='border:1px solid #ccc; min-height:80px; padding:4px;'>{d}</div>"
+                        html.append(f"<td style='border:1px solid #ddd; background:#f9f9f9;'><b>{day.day}</b><br>-</td>")
+                else:
+                    html.append(
+                        f"<td style='border:1px solid #ddd; background:#f0f8ff;'>"
+                        f"<b>{day.day}</b><br>{daily_need:,.0f}ea 예정</td>"
+                    )
+            html.append("</tr>")
+        html.append("</table>")
 
-        html += "</div>"
-        return ui.HTML(html)
+        return ui.HTML("".join(html))
 
-
+    # =====================================================
+    # 🧮 하단 요약 텍스트
+    # =====================================================
     @render.text
-    @reactive.event(input.refresh_actual)
     def daily_summary():
-        """누적 생산량 및 남은 목표량 요약"""
-        today = datetime.date.today()
-        year, month = today.year, today.month
-        selected_day = input.selected_day()
-        target = input.monthly_target_cur()
+        ref_date_str = input.ref_date() or None
+        if not ref_date_str:
+            ref_date = datetime.date.today()
+        else:
+            ref_date = pd.to_datetime(ref_date_str).normalize()
 
-        df_actual = train.copy()
-        df_actual["time"] = pd.to_datetime(df_actual["time"], errors="coerce")
-        df_actual["date"] = df_actual["time"].dt.date
-        daily_actual = (
-            df_actual.groupby("date")["count"]
-            .agg(["min", "max"])
-            .reset_index()
-        )
-        daily_actual["daily_prod"] = daily_actual["max"] - daily_actual["min"] + 1
+        year, month = ref_date.year, ref_date.month
+        total_days_in_month = calendar.monthrange(year, month)[1]
 
-        produced = daily_actual.loc[daily_actual["date"] <= selected_day, "daily_prod"].sum()
-        remaining_days = (calendar.monthrange(year, month)[1] - selected_day.day)
-        remaining_target = max(target - produced, 0)
-        needed_daily = remaining_target / remaining_days if remaining_days > 0 else 0
+        df_month = fin_all[
+            (fin_all["real_time"].dt.year == year) &
+            (fin_all["real_time"].dt.month == month)
+        ].copy()
+
+        if df_month.empty:
+            return f"⚠️ {year}년 {month}월 데이터 없음"
+
+        daily_df = df_month.groupby("date").size().reset_index(name="daily_prod")
+        total_rows = daily_df["daily_prod"].sum()
+        unique_days = daily_df["date"].nunique()
+        avg_daily = total_rows / unique_days
+        monthly_target = avg_daily * total_days_in_month 
+
+        produced = daily_df[daily_df["date"] <= ref_date]["daily_prod"].sum()
+        achieve_rate = round(produced / monthly_target * 100, 1)
+        remaining = max(monthly_target - produced, 0)
+        last_day = datetime.date(year, month, total_days_in_month)
+        remaining_days = max((last_day - ref_date.date()).days, 0)
+        daily_need = round(remaining / remaining_days, 1) if remaining_days > 0 else 0
 
         return (
-            f"📈 {selected_day.strftime('%m월 %d일')}까지 누적 생산량: {produced:,}ea\n"
-            f"🎯 남은 목표: {remaining_target:,}ea / 남은 {remaining_days}일\n"
-            f"⚙️ 필요 일평균 생산량: {needed_daily:,.0f}ea"
+            f"📆 {ref_date.strftime('%Y년 %m월 %d일')} 기준 누적 생산량: {produced:,.0f}ea "
+            f"({achieve_rate:.1f}%) 🎯 남은 목표: {remaining:,.0f}ea / 남은 {remaining_days}일 → "
+            f"하루 평균 {daily_need:,.0f}ea 필요"
         )
+
 
 
     # ======== 📈 데이터 분석 탭 ========
