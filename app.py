@@ -2,6 +2,7 @@ import pandas as pd
 import joblib
 import matplotlib.pyplot as plt
 from shiny import App, ui, render, reactive, session
+from shiny.reactive import invalidate_later
 from shiny.ui import update_slider, update_numeric, update_select, update_navs
 import seaborn as sns
 import pathlib
@@ -18,6 +19,12 @@ import datetime
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from scipy import stats
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+plt.ioff()
+
 # ======== 실시간 스트리밍 대시보드 (현장 메뉴) ========
 from shared import streaming_df, RealTimeStreamer, KFStreamer
 import plotly.express as px
@@ -69,7 +76,7 @@ display_cols = [
 streamer = reactive.Value(RealTimeStreamer(streaming_df))
 current_data = reactive.Value(pd.DataFrame())
 is_streaming = reactive.Value(False)
-KF_PATH = pathlib.Path("./data/fin_test_kf.csv")
+KF_PATH = pathlib.Path("./data/fin_test_kf_fixed.csv")
 kf_streamer = reactive.Value(KFStreamer(KF_PATH))
 
 # ===== 한글 변수명 매핑 =====
@@ -2148,7 +2155,6 @@ def server(input, output, session):
             ]
     
             available_cols = [c for c in cols if c in df.columns]
-            print("냉각 단계 사용 컬럼:", available_cols)
     
             if not available_cols:
                 return pd.DataFrame({"메시지": ["냉각 단계 데이터가 존재하지 않습니다."]})
@@ -2204,6 +2210,16 @@ def server(input, output, session):
             return plot_t2_chart(idx, T2, UCL, "제품 테스트")
         except Exception:
             return make_placeholder_chart("제품 테스트")
+    
+    
+    # ============================================================
+    # 🔹 실시간 관리도 갱신 주기 제어
+    # ============================================================
+    @reactive.effect
+    def refresh_control_charts():
+        # 🔸 주기(초) 설정 — 2.0이면 2초마다 다시 그림
+        invalidate_later(5.0)
+        pass
 
 
     @output
