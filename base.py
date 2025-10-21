@@ -393,8 +393,8 @@ import joblib
 # -------------------------------
 # 0️⃣ 데이터 로드
 # -------------------------------
-train = pd.read_csv('./data/fin_train.csv')
-test = pd.read_csv('./data/fin_test_kf.csv')  # 사용하지 않음
+train = pd.read_csv('./data/fin_train_fixed.csv')
+test = pd.read_csv('./data/fin_test_kf_fixed.csv')  # 사용하지 않음
 
 TARGET = 'passorfail'
 DROP_COLS = ['team', 'real_time']
