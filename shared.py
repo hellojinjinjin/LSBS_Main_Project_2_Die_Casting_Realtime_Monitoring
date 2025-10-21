@@ -8,8 +8,14 @@ try:
 except UnicodeDecodeError:
     streaming_df = pd.read_csv(app_dir / "./data/test.csv", encoding="cp949")
 
+try:
+    kf_streaming_df = pd.read_csv(app_dir / "./data/ffin_test_kf_fixed.csv", encoding="utf-8")
+except UnicodeDecodeError:
+    kf_streaming_df = pd.read_csv(app_dir / "./data/ffin_test_kf_fixed.csv", encoding="cp949")
+
 # real_time 컬럼을 datetime 형식으로 변환
 streaming_df["real_time"] = pd.to_datetime(streaming_df["real_time"], errors="coerce")
+kf_streaming_df["real_time"] = pd.to_datetime(kf_streaming_df["real_time"], errors="coerce")
 
 # # 오름차순 정렬
 # streaming_df = streaming_df.sort_values(by="real_time", ascending=True).reset_index(drop=True)
@@ -43,13 +49,8 @@ import pandas as pd
 from pathlib import Path
 
 class KFStreamer:
-    def __init__(self, csv_path: str):
-        csv_path = Path(csv_path)
-        if not csv_path.exists():
-            raise FileNotFoundError(f"CSV 파일을 찾을 수 없습니다: {csv_path}")
-
-        # ✅ CSV 로드
-        self.full_data = pd.read_csv(csv_path).reset_index(drop=True).copy()
+    def __init__(self, data: pd.DataFrame):
+        self.full_data = data.reset_index(drop=True).copy()
         self.current_index = 0
 
     def get_next_batch(self, batch_size: int = 1):

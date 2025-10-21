@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 plt.ioff()
 
 # ======== 실시간 스트리밍 대시보드 (현장 메뉴) ========
-from shared import streaming_df, RealTimeStreamer, KFStreamer
+from shared import streaming_df, kf_streaming_df, RealTimeStreamer, KFStreamer
 import plotly.express as px
 import plotly.graph_objects as go
 import datetime
@@ -177,10 +177,9 @@ display_cols = [
 
 # 스트리밍 초기 설정
 streamer = reactive.Value(RealTimeStreamer(streaming_df))
+kf_streamer = reactive.Value(KFStreamer(kf_streaming_df))
 current_data = reactive.Value(pd.DataFrame())
 is_streaming = reactive.Value(False)
-KF_PATH = pathlib.Path("./data/ffin_test_kf_fixed.csv")
-kf_streamer = reactive.Value(KFStreamer(KF_PATH))
 
 # ===== 한글 변수명 매핑 =====
 VAR_LABELS = {
