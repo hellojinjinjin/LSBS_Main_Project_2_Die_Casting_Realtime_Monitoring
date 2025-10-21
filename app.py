@@ -2841,7 +2841,7 @@ def server(input, output, session):
         label = speed_map.get(speed, "1x")
 
         # 색상 (스트리밍 중: 파랑 / 정지 시: 회색)
-        fast_color = "#60a5fa" if is_streaming() else "#9ca3af"
+        fast_color = "#60a5fa"
 
         return ui.div(
             {"style": "display:flex; gap:6px; align-items:center;"},
@@ -2868,10 +2868,7 @@ def server(input, output, session):
                     f"<span style='font-size:11px;'>{label}</span>"
                     f"</div>"
                 ),
-                style=btn_base + f"background-color:{fast_color}; "
-                                f"opacity:{1 if is_streaming() else 0.5}; "
-                                f"cursor:{'pointer' if is_streaming() else 'not-allowed'};",
-                disabled=not is_streaming(),
+                style=btn_base + f"background-color:{fast_color}; ",
                 title="빨리감기",
             ),
 
