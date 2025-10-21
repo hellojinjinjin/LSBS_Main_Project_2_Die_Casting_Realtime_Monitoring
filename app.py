@@ -856,7 +856,7 @@ def floating_stream_bar():
                 "display:flex; align-items:center; gap:16px;"
                 "background-color:#fef6ee; border:1px solid #e0c8a0;"
                 "border-bottom:none; border-radius:8px 8px 0 0;"
-                "padding:8px 16px; position:absolute; top:65px; right:40px;"
+                "padding:8px 16px; position:absolute; top:28px; right:40px;"
                 # 🔽 z-index를 낮춤 (1500 → 900)
                 "z-index:900; font-weight:bold; color:#5c4b3b;"
                 "backdrop-filter:blur(2px);"  # 💡선택: 흐림 효과 보완
@@ -1380,7 +1380,7 @@ def main_page(selected_tab: str):
                 "min-height:calc(100vh - 80px);"
             )
         },
-        ui.h4(current_title),
+        # ui.h4(current_title),
         ui.div(tab_contents.get(selected_tab, ui.p("페이지 없음"))),
     )
 
