@@ -322,7 +322,7 @@ df_raw = df_raw[
 ]
 
 # 예측용 데이터도 동일 처리
-df_predict = pd.read_csv("./data/fin_train.csv")
+df_predict = pd.read_csv("./data/train_pred.csv")
 df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace([np.inf, -np.inf], np.nan)
 
 
@@ -1227,8 +1227,8 @@ def main_page(selected_tab: str):
                             ui.card_header("공정 상태 관련"),
                             ui.layout_columns(
                                 ui.input_numeric("count", "일조 누적 제품 개수", value=int(df_predict["count"].mean())),
-                                # ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
-                                # ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
+                                ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
+                                ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
                                 ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=int(df_predict["speed_ratio"].mean())),
                                 ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=int(df_predict["pressure_speed_ratio"].mean())),
                                 make_select("working", "장비 가동 여부"),
@@ -1270,10 +1270,10 @@ def main_page(selected_tab: str):
                             ui.layout_columns(
                                 make_num_slider("upper_mold_temp1"),
                                 make_num_slider("upper_mold_temp2"),
-                                # make_num_slider("upper_mold_temp3"),
+                                make_num_slider("upper_mold_temp3"),
                                 make_num_slider("lower_mold_temp1"),
                                 make_num_slider("lower_mold_temp2"),
-                                # make_num_slider("lower_mold_temp3"),
+                                make_num_slider("lower_mold_temp3"),
                                 make_num_slider("Coolant_temperature"),
                                 col_widths=[3,3,3,3]
                             )
@@ -4087,7 +4087,7 @@ def server(input, output, session):
 
     @output
     @render.plot
-    def local_factor_plot():
+    def local_factor_plot_for_pred():
      factors = local_factors()
      if factors is None or factors.empty:
         fig, ax = plt.subplots()
@@ -4117,7 +4117,7 @@ def server(input, output, session):
     # === 여기에 local_factor_desc() 붙여넣기 ===
     @output
     @render.ui
-    def local_factor_desc():
+    def local_factor_desc_for_pred():
      factors = local_factors()
      if factors is None or factors.empty:
         return ui.markdown("아직 예측을 실행하지 않았습니다.")
@@ -4189,9 +4189,9 @@ def server(input, output, session):
 
         return ui.card(
             ui.card_header("불량 기여 요인 Top 5", style="text-align:center; background-color:#f8f9fa; font-weight:bold;"),
-            ui.output_plot("local_factor_plot"),
+            ui.output_plot("local_factor_plot_for_pred"),
             ui.hr(),
-            ui.output_ui("local_factor_desc")
+            ui.output_ui("local_factor_desc_for_pred")
         )
     prediction_done = reactive.Value(False)
 
@@ -4228,9 +4228,9 @@ def server(input, output, session):
         # 불량인 경우만 표시
         return ui.card(
             ui.card_header("불량 기여 요인 Top 5", style="text-align:center; background-color:#f8f9fa; font-weight:bold;"),
-            ui.output_plot("local_factor_plot"),
+            ui.output_plot("local_factor_plot_for_pred"),
             ui.hr(),
-            ui.output_ui("local_factor_desc")
+            ui.output_ui("local_factor_desc_for_pred")
         )
 
 
