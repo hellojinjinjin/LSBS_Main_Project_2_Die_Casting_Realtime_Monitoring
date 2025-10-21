@@ -1,0 +1,424 @@
+{
+  "8412": {
+    "count": {
+      "mu": 150.3752,
+      "sigma": 89.0277
+    },
+    "molten_temp": {
+      "mu": 721.7011,
+      "sigma": 29.1236
+    },
+    "facility_operation_cycleTime": {
+      "mu": 120.1049,
+      "sigma": 12.4146
+    },
+    "production_cycletime": {
+      "mu": 123.2558,
+      "sigma": 19.2595
+    },
+    "low_section_speed": {
+      "mu": 114.0056,
+      "sigma": 13.5531
+    },
+    "high_section_speed": {
+      "mu": 117.0084,
+      "sigma": 14.7061
+    },
+    "molten_volume": {
+      "mu": 623.8367,
+      "sigma": 1093.359
+    },
+    "cast_pressure": {
+      "mu": 322.4474,
+      "sigma": 28.0196
+    },
+    "biscuit_thickness": {
+      "mu": 51.3031,
+      "sigma": 15.0888
+    },
+    "upper_mold_temp1": {
+      "mu": 191.9671,
+      "sigma": 41.2142
+    },
+    "upper_mold_temp2": {
+      "mu": 147.8334,
+      "sigma": 18.9636
+    },
+    "upper_mold_temp3": {
+      "mu": 1431.8362,
+      "sigma": 148.1696
+    },
+    "lower_mold_temp1": {
+      "mu": 146.615,
+      "sigma": 33.0574
+    },
+    "lower_mold_temp2": {
+      "mu": 192.0688,
+      "sigma": 38.9965
+    },
+    "sleeve_temperature": {
+      "mu": 374.8158,
+      "sigma": 145.2225
+    },
+    "physical_strength": {
+      "mu": 705.4488,
+      "sigma": 831.7355
+    },
+    "Coolant_temperature": {
+      "mu": 33.6198,
+      "sigma": 31.3512
+    },
+    "EMS_operation_time": {
+      "mu": 13.6762,
+      "sigma": 8.6714
+    },
+    "passorfail": {
+      "mu": 0.0344,
+      "sigma": 0.1822
+    },
+    "speed_ratio": {
+      "mu": 0.976,
+      "sigma": 0.0485
+    },
+    "pressure_speed_ratio": {
+      "mu": 2.7914,
+      "sigma": 0.4341
+    }
+  },
+  "8573": {
+    "count": {
+      "mu": 142.5394,
+      "sigma": 85.3403
+    },
+    "molten_temp": {
+      "mu": 719.8491,
+      "sigma": 28.6265
+    },
+    "facility_operation_cycleTime": {
+      "mu": 124.4944,
+      "sigma": 15.6905
+    },
+    "production_cycletime": {
+      "mu": 124.6644,
+      "sigma": 15.3457
+    },
+    "low_section_speed": {
+      "mu": 109.6362,
+      "sigma": 5.7375
+    },
+    "high_section_speed": {
+      "mu": 112.5019,
+      "sigma": 5.7013
+    },
+    "molten_volume": {
+      "mu": 1589.5142,
+      "sigma": 1335.2587
+    },
+    "cast_pressure": {
+      "mu": 323.744,
+      "sigma": 33.2045
+    },
+    "biscuit_thickness": {
+      "mu": 53.597,
+      "sigma": 16.6764
+    },
+    "upper_mold_temp1": {
+      "mu": 217.9206,
+      "sigma": 36.8199
+    },
+    "upper_mold_temp2": {
+      "mu": 186.1618,
+      "sigma": 24.2944
+    },
+    "upper_mold_temp3": {
+      "mu": 216.5492,
+      "sigma": 333.5377
+    },
+    "lower_mold_temp1": {
+      "mu": 178.4677,
+      "sigma": 50.2531
+    },
+    "lower_mold_temp2": {
+      "mu": 199.4165,
+      "sigma": 27.4026
+    },
+    "sleeve_temperature": {
+      "mu": 495.0173,
+      "sigma": 56.2851
+    },
+    "physical_strength": {
+      "mu": 706.3746,
+      "sigma": 21.0765
+    },
+    "Coolant_temperature": {
+      "mu": 31.0945,
+      "sigma": 1.9091
+    },
+    "EMS_operation_time": {
+      "mu": 23.0,
+      "sigma": 0.0
+    },
+    "passorfail": {
+      "mu": 0.0438,
+      "sigma": 0.2046
+    },
+    "speed_ratio": {
+      "mu": 0.9754,
+      "sigma": 0.0524
+    }
+  },
+  "8600": {
+    "count": {
+      "mu": 141.0243,
+      "sigma": 84.9443
+    },
+    "molten_temp": {
+      "mu": 683.1203,
+      "sigma": 132.5895
+    },
+    "facility_operation_cycleTime": {
+      "mu": 122.0473,
+      "sigma": 11.5317
+    },
+    "production_cycletime": {
+      "mu": 124.5463,
+      "sigma": 9.0868
+    },
+    "low_section_speed": {
+      "mu": 113.8375,
+      "sigma": 4.5265
+    },
+    "high_section_speed": {
+      "mu": 122.5628,
+      "sigma": 25.3439
+    },
+    "molten_volume": {
+      "mu": 66.7726,
+      "sigma": 76.1234
+    },
+    "cast_pressure": {
+      "mu": 321.8581,
+      "sigma": 22.644
+    },
+    "biscuit_thickness": {
+      "mu": 47.6233,
+      "sigma": 10.7488
+    },
+    "upper_mold_temp1": {
+      "mu": 220.4642,
+      "sigma": 62.5327
+    },
+    "upper_mold_temp2": {
+      "mu": 172.0689,
+      "sigma": 22.8349
+    },
+    "upper_mold_temp3": {
+      "mu": 1449.0,
+      "sigma": 0.0
+    },
+    "lower_mold_temp1": {
+      "mu": 209.951,
+      "sigma": 49.84
+    },
+    "lower_mold_temp2": {
+      "mu": 186.9152,
+      "sigma": 27.0403
+    },
+    "sleeve_temperature": {
+      "mu": 499.4959,
+      "sigma": 13.6651
+    },
+    "physical_strength": {
+      "mu": 691.4926,
+      "sigma": 4.0597
+    },
+    "Coolant_temperature": {
+      "mu": 31.3257,
+      "sigma": 2.8527
+    },
+    "EMS_operation_time": {
+      "mu": 23.0,
+      "sigma": 0.0
+    },
+    "passorfail": {
+      "mu": 0.0507,
+      "sigma": 0.2194
+    },
+    "speed_ratio": {
+      "mu": 0.9496,
+      "sigma": 0.1101
+    },
+    "pressure_speed_ratio": {
+      "mu": 2.6848,
+      "sigma": 0.3523
+    }
+  },
+  "8722": {
+    "count": {
+      "mu": 148.5751,
+      "sigma": 87.4302
+    },
+    "molten_temp": {
+      "mu": 711.2963,
+      "sigma": 89.0273
+    },
+    "facility_operation_cycleTime": {
+      "mu": 122.1349,
+      "sigma": 10.5568
+    },
+    "production_cycletime": {
+      "mu": 122.5179,
+      "sigma": 9.9578
+    },
+    "low_section_speed": {
+      "mu": 108.7015,
+      "sigma": 466.7202
+    },
+    "high_section_speed": {
+      "mu": 109.4207,
+      "sigma": 11.0075
+    },
+    "molten_volume": {
+      "mu": 65.2606,
+      "sigma": 74.2854
+    },
+    "cast_pressure": {
+      "mu": 324.7543,
+      "sigma": 24.1491
+    },
+    "biscuit_thickness": {
+      "mu": 48.351,
+      "sigma": 23.3548
+    },
+    "upper_mold_temp1": {
+      "mu": 181.5643,
+      "sigma": 32.7523
+    },
+    "upper_mold_temp2": {
+      "mu": 149.5635,
+      "sigma": 27.7234
+    },
+    "upper_mold_temp3": {
+      "mu": 1449.0,
+      "sigma": 0.0
+    },
+    "lower_mold_temp1": {
+      "mu": 225.4978,
+      "sigma": 47.6814
+    },
+    "lower_mold_temp2": {
+      "mu": 216.7731,
+      "sigma": 45.7381
+    },
+    "sleeve_temperature": {
+      "mu": 467.5562,
+      "sigma": 65.0518
+    },
+    "physical_strength": {
+      "mu": 691.7037,
+      "sigma": 39.2726
+    },
+    "Coolant_temperature": {
+      "mu": 33.7639,
+      "sigma": 3.0679
+    },
+    "EMS_operation_time": {
+      "mu": 23.0,
+      "sigma": 0.0
+    },
+    "passorfail": {
+      "mu": 0.0532,
+      "sigma": 0.2244
+    },
+    "speed_ratio": {
+      "mu": 0.9978,
+      "sigma": 4.4033
+    }
+  },
+  "8917": {
+    "count": {
+      "mu": 150.0469,
+      "sigma": 88.3991
+    },
+    "molten_temp": {
+      "mu": 718.3388,
+      "sigma": 18.5416
+    },
+    "facility_operation_cycleTime": {
+      "mu": 120.1293,
+      "sigma": 11.5957
+    },
+    "production_cycletime": {
+      "mu": 120.7497,
+      "sigma": 12.0572
+    },
+    "low_section_speed": {
+      "mu": 108.6957,
+      "sigma": 7.8886
+    },
+    "high_section_speed": {
+      "mu": 111.6166,
+      "sigma": 5.7785
+    },
+    "molten_volume": {
+      "mu": 212.322,
+      "sigma": 615.2095
+    },
+    "cast_pressure": {
+      "mu": 324.9087,
+      "sigma": 28.1792
+    },
+    "biscuit_thickness": {
+      "mu": 51.365,
+      "sigma": 16.5318
+    },
+    "upper_mold_temp1": {
+      "mu": 156.6322,
+      "sigma": 48.6021
+    },
+    "upper_mold_temp2": {
+      "mu": 172.1001,
+      "sigma": 33.0463
+    },
+    "upper_mold_temp3": {
+      "mu": 1449.0,
+      "sigma": 0.0
+    },
+    "lower_mold_temp1": {
+      "mu": 228.3116,
+      "sigma": 39.4208
+    },
+    "lower_mold_temp2": {
+      "mu": 175.1163,
+      "sigma": 44.5803
+    },
+    "sleeve_temperature": {
+      "mu": 454.8597,
+      "sigma": 69.4308
+    },
+    "physical_strength": {
+      "mu": 702.4444,
+      "sigma": 25.7021
+    },
+    "Coolant_temperature": {
+      "mu": 31.3236,
+      "sigma": 2.3239
+    },
+    "EMS_operation_time": {
+      "mu": 20.7856,
+      "sigma": 6.2758
+    },
+    "passorfail": {
+      "mu": 0.0448,
+      "sigma": 0.207
+    },
+    "speed_ratio": {
+      "mu": 0.9746,
+      "sigma": 0.071
+    },
+    "pressure_speed_ratio": {
+      "mu": 2.9208,
+      "sigma": 0.5105
+    }
+  }
+}

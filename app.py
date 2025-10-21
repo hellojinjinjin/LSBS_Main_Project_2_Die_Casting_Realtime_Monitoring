@@ -543,56 +543,33 @@ months = list(range(1, 13))
 
 # ======== 전역 HEAD (favicon, CSS 등) ========
 global_head = ui.head_content(
-    # =====================================================
-    # 🧩 공통 리소스 연결
-    # =====================================================
     ui.tags.link(rel="icon", type="image/x-icon", href="favicon.ico"),
-    ui.tags.link(
-        rel="stylesheet",
-        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
-    ),
-    ui.tags.link(
-        rel="stylesheet",
-        type="text/css",
-        href="custom.css"
-    ),
+    ui.tags.link(rel="stylesheet", href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"),
+    ui.tags.link(rel="stylesheet", type="text/css", href="custom.css"),
     ui.tags.title("주조 공정 불량 예측 대시보드"),
 
     # =====================================================
-    # 📜 주요 클라이언트 스크립트 (6시그마, 센서 업데이트, 리셋)
+    # 📜 mold_code별 6시그마 + 실시간 색상 업데이트 스크립트
     # =====================================================
     ui.tags.script("""
         // =====================================================
-        // 📘 6시그마 기준 로드
+        // 📘 mold_code별 6시그마 기준 로드
         // =====================================================
-        let THRESHOLDS = {};
+        let THRESHOLDS_BY_MOLD = {};
 
-        fetch("sixsigma_thresholds_extended.json?t=" + Date.now())
-            .then(res => {
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return res.json();
-            })
+        fetch("sixsigma_thresholds_by_mold.json?t=" + Date.now())
+            .then(res => res.json())
             .then(data => {
-                THRESHOLDS = data;
-                console.log(
-                    "✅ 6시그마 기준 로드 완료:",
-                    Object.keys(THRESHOLDS).length, "개 변수"
-                );
+                THRESHOLDS_BY_MOLD = data;
             })
-            .catch(err =>
-                console.error("⚠️ sixsigma_thresholds_extended.json 로드 실패:", err)
-            );
+            .catch(err => console.error("⚠️ 6시그마 로드 실패:", err));
 
         // =====================================================
-        // ⚙️ 단위 판정 함수 (upper/lower_mold_temp 포함)
+        // ⚙️ 단위 판정
         // =====================================================
         function unitFor(key) {
             const k = key.toLowerCase();
-
-            // ✅ 모든 형태의 온도 변수 인식
             if (k.includes("temp")) return " °C";
-
-            // 🔹 나머지 단위
             if (k.includes("pressure")) return " bar";
             if (k.includes("speed")) return " cm/s";
             if (k.includes("volume")) return " cc";
@@ -603,85 +580,73 @@ global_head = ui.head_content(
         }
 
         // =====================================================
-        // 🎨 σ 단계별 색상 계산 (금형코드 예외: 검정색)
+        // 🎨 mold_code별 σ 색상 계산
         // =====================================================
-        function colorBySigmaLevel(key, val) {
+        function colorBySigmaLevel(key, val, moldCode) {
             const k = key.toLowerCase();
-
-            // 🎯 금형코드는 항상 검정
             if (k.includes("mold_code")) return "#111827";
 
-            let info = THRESHOLDS[key];
-            if (!info) {
-                const matchKey = Object.keys(THRESHOLDS)
-                    .find(thKey => thKey.toLowerCase() === k);
-                if (!matchKey) {
-                    // 기준이 없어도 초록색으로 처리하고 이후 텍스트 갱신은 계속 진행
-                    return "#00C853";
-                }
-                info = THRESHOLDS[matchKey];
-            }
+            const moldData = THRESHOLDS_BY_MOLD[moldCode];
+            if (!moldData) return "#00C853";
+
+            const info = moldData[key];
+            if (!info || !info.sigma || info.sigma === 0) return "#00C853";
 
             const mu = info.mu;
             const sigma = info.sigma;
-            if (!sigma || sigma === 0) return "#00C853";
-
             const diff = Math.abs(val - mu);
 
-            if (diff <= 1 * sigma) return "#00C853"; // ✅ 초록 (정상)
-            if (diff <= 2 * sigma) return "#FFD600"; // ⚠️ 노랑 (1~2σ)
-            if (diff <= 3 * sigma) return "#FB8C00"; // 🟠 주황 (2~3σ)
-            return "#E53935";                         // 🔴 빨강 (3σ 이상)
+            if (diff <= 1 * sigma) return "#00C853"; // 초록
+            if (diff <= 2 * sigma) return "#FFD600"; // 노랑
+            if (diff <= 3 * sigma) return "#FB8C00"; // 주황
+            return "#E53935";                         // 빨강
         }
 
         // =====================================================
-        // 🔹 실시간 센서 업데이트 핸들러
+        // 🔹 실시간 센서 업데이트 (mold_code 기반)
         // =====================================================
-        Shiny.addCustomMessageHandler("updateSensors", function(values) {
+        Shiny.addCustomMessageHandler("updateSensors", function(data) {
+            const values = data.values;
+            const moldCode = String(data.mold_code || "");
+
             for (const [key, val] of Object.entries(values)) {
                 if (typeof val !== "number" || isNaN(val) || val === 0) continue;
 
-                // === ① 값 노드 찾기 ===
                 const valueNode = document.querySelector(`#var-${key} .value`);
                 if (!valueNode) continue;
 
-                // === ② 색상 계산 (σ 단계별) ===
-                const color = colorBySigmaLevel(key, val);
+                const color = colorBySigmaLevel(key, val, moldCode);
 
-                // === ③ 텍스트 내용 업데이트 ===
                 const isMold = key.toLowerCase().includes("mold_code");
                 const txt = isMold
                     ? `${Math.round(val)}`
                     : `${val.toFixed(1)}${unitFor(key)}`;
+
                 valueNode.textContent = txt;
                 valueNode.setAttribute("fill", color);
 
-                // === ④ 배경 테두리 색상 업데이트 ===
+                // 배경 테두리 색상 동기화
                 const rectNode = document.querySelector(`#var-${key} rect`);
                 if (rectNode) {
-                    const strokeColor = color === "#00C853" ? "#ddd" : color; // 정상일땐 회색 유지
+                    const strokeColor = color === "#00C853" ? "#ddd" : color;
                     rectNode.setAttribute("stroke", strokeColor);
-                    rectNode.setAttribute(
-                        "stroke-width",
-                        color === "#00C853" ? "0.5" : "1.5"
-                    );
+                    rectNode.setAttribute("stroke-width",
+                        color === "#00C853" ? "0.5" : "1.5");
                 }
             }
         });
 
         // =====================================================
-        // 🔹 모든 센서 초기화 핸들러 (값 '—'로 변경)
+        // 🔹 센서 초기화 핸들러 (값 '—', 테두리 회색)
         // =====================================================
         Shiny.addCustomMessageHandler("resetSensors", function(message) {
-            // 모든 센서의 값(tspan.value)을 '—' 로 바꾸고 색상을 검정으로
             document.querySelectorAll("tspan.value").forEach(node => {
                 node.textContent = "—";
-                node.setAttribute("fill", "#111827"); // 검정색
+                node.setAttribute("fill", "#111827");
                 const parent = node.closest("text");
                 if (parent) parent.setAttribute("fill", "#111827");
             });
 
-            // ✅ 테두리도 회색으로 복구
             document.querySelectorAll("g[id^='var-'] rect").forEach(rect => {
                 rect.setAttribute("stroke", "#ddd");
                 rect.setAttribute("stroke-width", "0.5");
@@ -696,8 +661,6 @@ global_head = ui.head_content(
         Shiny.addCustomMessageHandler("updateGif", function(data) {
             const img = document.getElementById("process_gif");
             if (!img) return;
-
-            // ⚡ 캐시 무효화를 위해 timestamp 붙임
             img.src = data.src + "?t=" + new Date().getTime();
         });
     """),
@@ -2429,14 +2392,16 @@ def server(input, output, session):
         kf_streamer().reset_stream()
         current_data.set(pd.DataFrame())
         is_streaming.set(False)
-        stream_speed.set(2.0)   # ✅ 배속 기본값으로 초기화
+        stream_speed.set(2.0)  # ✅ 배속 기본값으로 초기화
 
         # ✅ 1️⃣ 먼저 표시 리셋
         await session.send_custom_message("resetSensors", True)
 
-        # ✅ 2️⃣ 내부 데이터 상태 리셋
-        reset_values = {col: 0.0 for col in display_cols}
-        await session.send_custom_message("updateSensors", reset_values)
+        # ✅ 2️⃣ mold_code 구조에 맞는 빈 값 전달 (오류 방지)
+        await session.send_custom_message("updateSensors", {
+            "values": {},
+            "mold_code": ""
+        })
 
     # 빨리감기 버튼 클릭 → 속도 순환 변경
     @reactive.effect
@@ -3866,6 +3831,45 @@ def server(input, output, session):
 
 # with open("./www/sixsigma_thresholds_extended.json", "w", encoding="utf-8") as f:
 #     json.dump(thresholds, f, ensure_ascii=False, indent=2, allow_nan=False)
+
+# =====================================================
+# 📘 mold_code별 6시그마 계산
+# =====================================================
+# INPUT_FILE = "./data/fin_train.csv"
+# OUTPUT_FILE = "./www/sixsigma_thresholds_by_mold.json"
+
+# os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
+
+# df = pd.read_csv(INPUT_FILE)
+
+# # 숫자형 컬럼만 선택 (mold_code 제외)
+# num_cols = df.select_dtypes(include=["number"]).columns
+# if "mold_code" in num_cols:
+#     num_cols = num_cols.drop("mold_code")
+
+# thresholds = {}
+
+# for mold, group in df.groupby("mold_code"):
+#     mold_dict = {}
+#     for col in num_cols:
+#         mu = group[col].mean()
+#         sigma = group[col].std()
+
+#         # NaN이나 비정상 값 처리
+#         if pd.isna(mu) or pd.isna(sigma):
+#             continue
+
+#         mu = float(np.nan_to_num(mu, nan=0.0))
+#         sigma = float(np.nan_to_num(sigma, nan=0.0))
+#         mold_dict[col] = {"mu": round(mu, 4), "sigma": round(sigma, 4)}
+
+#     thresholds[str(mold)] = mold_dict
+
+# # 저장
+# with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+#     json.dump(thresholds, f, ensure_ascii=False, indent=2, allow_nan=False)
+
+# print(f"✅ mold_code별 6시그마 저장 완료: {len(thresholds)}개 금형 → {OUTPUT_FILE}")
 
 # ======== 앱 실행 ========
 app = App(app_ui, server, static_assets=app_dir / "www")
