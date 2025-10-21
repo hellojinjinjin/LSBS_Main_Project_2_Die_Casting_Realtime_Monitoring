@@ -4711,9 +4711,11 @@ def server(input, output, session):
 
     # ------------------------------------------------------
     # ------------------------------------------------------
-    # 🧠 위험 구간 감시용 로그 (reactive 상태로 변경)
+    # 🧠 위험 구간 감시용 로그 (reactive 상태)
     # ------------------------------------------------------
-    risk_log = reactive.value([])  # ✅ deque → reactive.value list
+    risk_log = reactive.value(pd.DataFrame(columns=[
+        "real_time", "mold_code", "predict_prob", "predict", "passorfail"
+    ]))
 
     # ------------------------------------------------------
     # ⚠️ 위험 구간 감시 (stream 소비 시점)
@@ -4729,36 +4731,47 @@ def server(input, output, session):
         high = input.risk_high() if input.risk_high() is not None else 0.9
 
         last_row = df.iloc[-1]
+
         prob = float(last_row.get("predict_prob", 0))
-        mold = last_row.get("mold_code", "Unknown")
-        ts = last_row.get("real_time", "N/A")
-
-        # 위험 구간 감지
         if low <= prob <= high:
-            msg = f"⚠️ 위험구간 감지 | Mold: {mold}, Prob={prob:.3f}, 시간={ts}"
-            logs = [msg] + risk_log()  # 최근 로그 앞에 추가
-            risk_log.set(logs[:100])   # 최근 100개까지만 저장
-            print(msg)
+            logs = risk_log()
+            new_row = pd.DataFrame([{
+                "real_time": last_row.get("real_time", ""),
+                "mold_code": last_row.get("mold_code", ""),
+                "predict_prob": prob,
+                "predict": last_row.get("predict", ""),
+                "passorfail": last_row.get("passorfail", "")
+            }])
+            updated = pd.concat([new_row, logs], ignore_index=True).head(50)  # 최근 50개까지만
+            risk_log.set(updated)
 
+            print(f"⚠️ 위험구간 감지 | Mold={last_row.get('mold_code')} Prob={prob:.3f}")
 
     # ------------------------------------------------------
-    # 📋 실시간 예측 로그 UI 출력
+    # 📋 실시간 예측 로그 UI 출력 (테이블 형태)
     # ------------------------------------------------------
     @render.ui
     def log_viewer():
-        logs = risk_log()
-        if not logs:
+        df = risk_log()
+        if df.empty:
             return ui.h6("📄 현재까지 위험구간 예측이 없습니다.",
                         style="color:#777; font-size:13px;")
 
-        logs_html = "<br>".join(logs[:30])  # 최근 30개까지만 표시
+        # 표를 HTML로 변환
+        table_html = df.to_html(
+            index=False,
+            classes="table table-striped table-sm",
+            border=0,
+            justify="center"
+        )
+
         return ui.div(
             {"style": (
-                "font-size:12px; color:#333; line-height:1.4; white-space:pre-wrap; "
-                "max-height:220px; overflow-y:auto; background:#f8f9fa; "
-                "padding:8px; border-radius:6px;"
+                "font-size:12px; color:#333; line-height:1.4; "
+                "max-height:260px; overflow-y:auto; background:#f8f9fa; "
+                "padding:6px; border-radius:6px; border:1px solid #ddd;"
             )},
-            ui.HTML(logs_html)
+            ui.HTML(table_html)
         )
 
 # ======== 앱 실행 ========
