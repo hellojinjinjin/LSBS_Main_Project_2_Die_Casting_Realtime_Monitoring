@@ -836,7 +836,7 @@ def field_dashboard_ui():
         ),
         # ──────────────── 2행: 실시간 알림창 ────────────────
         ui.card(
-            ui.card_header("🔔 실시간 불량 알림"),
+            ui.card_header(ui.output_ui("alert_card_header")),
             ui.div(
                 ui.output_ui("realtime_alert_box"),
                 style=(
@@ -2625,7 +2625,52 @@ def server(input, output, session):
         if latest.get("passorfail", 0) == 1:
             mold = latest.get("mold_code", "-")
             time_str = str(latest.get("real_time", ""))
-            push_alert(f"🚨 불량 발생 — 금형 {mold}, 시각 {time_str}", defer=True)
+            push_alert(f" 불량 발생 — 금형 {mold}, 시각 {time_str}", defer=True)
+
+        # === ⚠️ 이상치 감지 (Z-score 기반) ===
+        numeric_keys = [
+            k for k, v in latest.items()
+            if isinstance(v, (int, float)) and not pd.isna(v) and k != "passorfail"
+        ]
+        if numeric_keys:
+            try:
+                df_check = current_data()
+                if df_check is not None and len(df_check) > 10:
+                    df_num = df_check[numeric_keys].select_dtypes(include="number")
+                    means = df_num.mean()
+                    stds = df_num.std().replace(0, np.nan)
+                    z_scores = (pd.Series(latest)[numeric_keys] - means) / stds
+
+                    # 🚨 |z|>3 : 심각 이상치
+                    severe_cols = [c for c in z_scores.index if abs(z_scores[c]) > 3]
+                    # ⚠️ 2<|z|≤3 : 경고 수준 이상치
+                    warn_cols = [c for c in z_scores.index if 2 < abs(z_scores[c]) <= 3]
+
+                    mold = latest.get("mold_code", "-")
+                    time_str = str(latest.get("real_time", ""))
+
+                    # ⚠️ 경고 수준 알림
+                    if warn_cols:
+                        cols_kor = [label_map.get(c, c) for c in warn_cols]
+                        cols_str = ", ".join(cols_kor)
+                        push_alert(
+                            f" 경고 구간 감지 — 금형 {mold}, 시각 {time_str}, 변수: {cols_str}",
+                            level="warning",
+                            defer=True
+                        )
+
+                    # 🚨 심각 수준 알림
+                    if severe_cols:
+                        cols_kor = [label_map.get(c, c) for c in severe_cols]
+                        cols_str = ", ".join(cols_kor)
+                        push_alert(
+                            f" 이상치 감지 — 금형 {mold}, 시각 {time_str}, 변수: {cols_str}",
+                            level="danger2",
+                            defer=True
+                        )
+
+            except Exception as e:
+                print("⚠️ 이상치 감지 중 오류:", e)
 
         # === JS 업데이트 ===
         clean_values = {}
@@ -2646,7 +2691,7 @@ def server(input, output, session):
         if buf:
             lst = list(alerts())
             lst.extend(buf)
-            alerts.set(lst[-20:])
+            alerts.set(lst[-100:])
             alert_buffer.set([])
 
     @output
@@ -2978,14 +3023,16 @@ def server(input, output, session):
         color_map = {
             "info": "#2196F3",
             "success": "#4CAF50",
-            "warning": "#FFC107",
-            "danger": "#E53935",
+            "warning": "#FB8C00",
+            "danger": "#AD0603",
+            "danger2": "#E53935",
         }
         icon_map = {
             "info": "fa-circle-info",
             "success": "fa-check-circle",
             "warning": "fa-triangle-exclamation",
-            "danger": "fa-circle-exclamation",
+            "danger": "fa-xmark",
+            "danger2": "fa-circle-exclamation",
         }
         now = datetime.datetime.now().strftime("%H:%M:%S")
         item = {
@@ -2993,7 +3040,7 @@ def server(input, output, session):
             "level": level,
             "color": color_map.get(level, "#2196F3"),
             "icon": icon_map.get(level, "fa-circle-info"),
-            "time": now,
+            # "time": now,
         }
 
         if defer:
@@ -3003,14 +3050,14 @@ def server(input, output, session):
         else:
             lst = list(alerts())
             lst.append(item)
-            alerts.set(lst[-20:])
+            alerts.set(lst[-100:])
 
     @output
     @render.ui
     def realtime_alert_box():
         items = list(reversed(alerts()))
         if not items:
-            return ui.div("⚪ 현재 불량 알림이 없습니다.", style="color:gray; text-align:center;")
+            return ui.div("알림 없음", style="color:gray; text-align:center;")
 
         html = ""
         for a in items:
@@ -3021,10 +3068,37 @@ def server(input, output, session):
                 border-radius:4px;">
                 <i class="fa-solid {a['icon']}" style="color:{a['color']};"></i>
                 <span style="margin-left:6px;">{a['msg']}</span>
-                <span style="float:right; color:gray; font-size:12px;">{a['time']}</span>
             </div>
             """
         return ui.HTML(html)
+
+
+    # ======================================================
+    # 🧩 알람 카드 제목 렌더링 (알람 개수 표시)
+    # ======================================================
+    @output
+    @render.ui
+    def alert_card_header():
+        count = len(alerts()) if alerts() else 0
+
+        # 빨간 배지 스타일
+        badge_style = (
+            "background-color:#dc3545; color:white; font-weight:bold; "
+            "border-radius:50%; width:22px; height:22px; "
+            "display:flex; align-items:center; justify-content:center; "
+            "font-size:13px; margin-left:8px;"
+        )
+
+        return ui.div(
+            {
+                "style": (
+                    "display:flex; align-items:center; gap:8px; "
+                    "font-weight:bold; font-size:16px; color:#5c4b3b;"
+                )
+            },
+            "📢 실시간 알림",
+            ui.div(str(count), style=badge_style)  # 🔴 빨간 동그라미 숫자
+        )
 
 # 🟢 TAB1. 끝
 # ============================================================
