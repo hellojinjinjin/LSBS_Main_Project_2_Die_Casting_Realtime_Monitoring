@@ -1345,6 +1345,7 @@ def main_page(selected_tab: str):
                 ui.output_ui("improvement_section")
 
             ),
+            id="quality_subtabs",
         ),
         "analysis": analysis_page_ui()
     }
@@ -3749,23 +3750,24 @@ def server(input, output, session):
     loading = reactive.value(False)
     local_factors = reactive.value(None)
 
-
-
-
     @output
     @render.data_frame
     def recent_data_table():
         df = current_data_field()
         if df is None or df.empty:
-            return pd.DataFrame({"알림": ["현재 수신된 데이터가 없습니다."]})
+            return render.DataGrid(
+                pd.DataFrame({"알림": ["현재 수신된 데이터가 없습니다."]}),
+                height="100%",
+                width="100%"
+            )
 
         data = df.copy()
 
-        # ✅ 2.5) passorfail 컬럼을 사람이 보기 좋게 한글 변환
+        # ✅ passorfail 한글 변환
         if "passorfail" in data.columns:
             data["passorfail"] = data["passorfail"].map({0: "양품", 1: "불량"}).fillna(data["passorfail"])
 
-        # 1) 3시그마 이상치 행 찾기
+        # ✅ 3σ 이상치와 불량 행 필터링
         numeric_cols = data.select_dtypes(include="number").columns.tolist()
         if numeric_cols:
             means = data[numeric_cols].mean()
@@ -3775,39 +3777,166 @@ def server(input, output, session):
         else:
             mask_3sigma = pd.Series(False, index=data.index)
 
-        # 2) 불량 행(passorfail==1) 찾기
         if "passorfail" in data.columns:
-            mask_fail = data["passorfail"] == 1
+            mask_fail = data["passorfail"] == "불량"
         else:
             mask_fail = pd.Series(False, index=data.index)
 
-        # 3) 두 조건 중 하나라도 맞는 행만 필터
         flagged = data[mask_3sigma | mask_fail].copy()
 
-        # 4) 없으면 “이상 행 없음” 표시(표는 1행 안내)
         if flagged.empty:
-            return pd.DataFrame({"알림": ["현재 3σ 이상치나 불량 행이 없습니다."]})
+            return render.DataGrid(
+                pd.DataFrame({"알림": ["현재 3σ 이상치나 불량 행이 없습니다."]}),
+                height="100%",
+                width="100%"
+            )
 
-        # 5) 보기 좋게 정리
-        #    - 최근 것부터 최대 200행
-        flagged = flagged.tail(200).round(2)
+        flagged = flagged.tail(200).round(2).reset_index(drop=True)
 
-        # 6) 한글 컬럼명으로 매핑(네가 선언한 label_map 재사용)
-        #    label_map에 없는 건 원래 이름 유지
+        # ✅ 컬럼명을 한글로 변환 (label_map 또는 COLUMN_NAMES_KR 사용)
         def to_kor(col):
-            return label_map.get(col, col)
+            # label_map 또는 COLUMN_NAMES_KR 중 사용 중인 맵을 자동 선택
+            if "label_map" in globals():
+                return label_map.get(col, col)
+            return col
+
         flagged.rename(columns={c: to_kor(c) for c in flagged.columns}, inplace=True)
 
-        # 7) 자주 보는 컬럼 앞으로 배치
+        # ✅ 주요 컬럼 앞으로 배치 (시간, 불량여부가 있으면 앞으로)
         prefer = [to_kor(c) for c in ["real_time", "passorfail"] if c in df.columns]
         other_cols = [c for c in flagged.columns if c not in prefer]
         flagged = flagged[prefer + other_cols] if prefer else flagged
 
-        return flagged.reset_index(drop=True)
+        # ✅ 핵심: 한 행만 선택 가능 + overflow visible 스타일 적용
+        return render.DataGrid(
+            flagged,
+            height="450px",
+            width="100%",
+            styles={
+                "overflow": "visible",          # ✅ 스크롤 전체 허용
+            },
+            row_selection_mode="single"
+        )
+
+    # ============================================================
+    # 📌 원인 분석 - 실시간 데이터 행 클릭 시 모달 표시
+    # ============================================================
+    # 최근 선택 인덱스 저장용 reactive 값
+    # ✅ 행 데이터 공유용 reactive 변수 추가
+    selected_row_for_prediction = reactive.Value(None)
+
+    # ✅ 마지막 선택 인덱스 기억
+    last_selected_index = reactive.Value(None)
+
+    @reactive.effect
+    def _handle_recent_row_selection():
+        selected = input.recent_data_table_selected_rows()
+
+        # 선택이 없으면 초기화만 하고 종료
+        if not selected:
+            last_selected_index.set(None)
+            return
+
+        idx = list(selected)[0]
+
+        # ✅ 이전과 같은 행이면 모달 재실행 방지
+        if last_selected_index() == idx:
+            return
+
+        last_selected_index.set(idx)
+
+        df = current_data_field()
+        if df is None or df.empty:
+            return
+
+        # 3σ + 불량 필터 동일하게 적용
+        data = df.copy()
+        if "passorfail" in data.columns:
+            data["passorfail"] = data["passorfail"].map({0: "양품", 1: "불량"}).fillna(data["passorfail"])
+
+        numeric_cols = data.select_dtypes(include="number").columns.tolist()
+        if numeric_cols:
+            means = data[numeric_cols].mean()
+            stds = data[numeric_cols].std().replace(0, np.nan)
+            z = (data[numeric_cols] - means) / stds
+            mask_3sigma = (z.abs() > 3).any(axis=1)
+        else:
+            mask_3sigma = pd.Series(False, index=data.index)
+
+        mask_fail = (data["passorfail"] == "불량") if "passorfail" in data.columns else pd.Series(False, index=data.index)
+        flagged = data[mask_3sigma | mask_fail].copy().tail(200).reset_index(drop=True)
+
+        if idx >= len(flagged):
+            return
+
+        row = flagged.iloc[idx].to_dict()
+
+        # ✅ 현재 행 데이터 저장 (예측탭에서 활용 가능)
+        selected_row_for_prediction.set(row)
+
+        # ✅ 모달 표시
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.h5("📋 선택된 행 상세 정보", style="font-weight:bold;"),
+                    ui.tags.table(
+                        {"class": "table table-striped table-bordered table-sm"},
+                        ui.tags.tbody(
+                            *[
+                                ui.tags.tr(
+                                    ui.tags.td(str(k), style="font-weight:bold; white-space:nowrap;"),
+                                    ui.tags.td(str(v))
+                                )
+                                for k, v in row.items()
+                            ]
+                        ),
+                    ),
+                    style="max-height:60vh; overflow-y:auto;"
+                ),
+                title=f"🔍 실시간 데이터 상세 (행 {idx + 1})",
+                easy_close=True,
+                footer=ui.div(
+                    {"style": "display:flex; justify-content:flex-end; gap:8px;"},
+                    ui.input_action_button("close_recent_modal", "닫기", class_="btn btn-secondary"),
+                    # ✅ 새 버튼: 예측 및 개선 탭으로 이동
+                    ui.input_action_button("goto_quality_prediction", "예측 및 개선 탭으로 이동", class_="btn btn-primary"),
+                ),
+            )
+        )
 
 
+    # ✅ 닫기 버튼 동작
+    @reactive.effect
+    @reactive.event(input.close_recent_modal)
+    def _close_recent_modal():
+        ui.modal_remove()
 
 
+    # ✅ "예측 및 개선 탭으로 이동" 버튼 동작
+    @reactive.effect
+    @reactive.event(input.goto_quality_prediction)
+    def _goto_quality_prediction():
+        ui.modal_remove()
+
+        row_data = selected_row_for_prediction()
+        if row_data:
+            print(f"📦 예측 및 개선 탭으로 전달된 행 데이터 ({len(row_data)}개 컬럼)")
+            for k, v in list(row_data.items())[:5]:
+                print(f"  {k}: {v}")
+            if len(row_data) > 5:
+                print("  ...")
+
+        # ✅ 상위 탭 전환 (품질 모니터링으로 이동)
+        try:
+            page_state.set("quality")
+        except Exception:
+            print("⚠️ page_state 미정의 — 필요시 제거 가능")
+
+        # ✅ 하위 탭 전환 (Shiny 내장 네비게이션 전환)
+        try:
+            ui.update_navs("quality_subtabs", selected="예측 및 개선")
+        except Exception:
+            print("⚠️ quality_subtabs ID를 가진 navset_tab이 존재해야 합니다.")
 
 
     @reactive.effect
