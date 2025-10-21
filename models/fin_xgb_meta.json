@@ -1,0 +1,17 @@
+{
+  "best_f2": 0.9603419811627537,
+  "best_threshold": 0.4119847374762302,
+  "best_params": {
+    "n_estimators": 760,
+    "max_depth": 4,
+    "learning_rate": 0.15652669187162074,
+    "subsample": 0.7213947830420988,
+    "colsample_bytree": 0.6676980838804646,
+    "min_child_weight": 4.287687838957565,
+    "gamma": 1.2862878726402578,
+    "scale_pos_weight": 6.513002413417968,
+    "reg_lambda": 1.4395219999613817,
+    "reg_alpha": 2.7448697238091837,
+    "max_delta_step": 9.07464527583147
+  }
+}

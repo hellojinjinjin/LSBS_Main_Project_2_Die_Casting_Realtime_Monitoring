@@ -1,4 +1,3 @@
-
 import pandas as pd
 import numpy as np
 import joblib
@@ -6,7 +5,7 @@ import json
 import time
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
-    fbeta_score, confusion_matrix, classification_report
+    fbeta_score, confusion_matrix
 )
 
 # ------------------------------------------------------------
@@ -24,6 +23,7 @@ def basic_fix(df: pd.DataFrame) -> pd.DataFrame:
         df.loc[np.isinf(df["pressure_speed_ratio"]), "pressure_speed_ratio"] = -1
     return df
 
+
 # ------------------------------------------------------------
 # 1️⃣ 설정
 # ------------------------------------------------------------
@@ -32,6 +32,7 @@ META_PATH = "./models/fin_xgb_meta_f20.json"
 TEST_PATH = "./data/fin_test_kf_fixed.csv"
 TARGET = "passorfail"
 DROP_COLS = ["team", "real_time"]
+
 
 # ------------------------------------------------------------
 # 2️⃣ 모델 & 메타 불러오기
@@ -43,6 +44,7 @@ with open(META_PATH, "r", encoding="utf-8") as f:
 
 best_threshold = meta.get("best_threshold", 0.5)
 print(f"✅ 모델 로드 완료 (threshold={best_threshold:.3f})")
+
 
 # ------------------------------------------------------------
 # 3️⃣ 테스트 데이터 로드
@@ -58,44 +60,60 @@ def read_csv_safely(path):
 test = read_csv_safely(TEST_PATH)
 print(f"✅ 테스트셋 로드 완료: {test.shape}")
 
+
 # ------------------------------------------------------------
 # 4️⃣ 예측 수행
 # ------------------------------------------------------------
 start = time.time()
-
 X_test = test.drop(columns=[TARGET] + [c for c in DROP_COLS if c in test.columns], errors="ignore")
 y_true = test[TARGET].values
-
 y_prob = model.predict_proba(X_test)[:, 1]
 y_pred = (y_prob >= best_threshold).astype(int)
-
 elapsed = time.time() - start
 
 # ------------------------------------------------------------
-# 5️⃣ 평가 지표 계산
+# 5️⃣ 전체 평가 출력
 # ------------------------------------------------------------
-acc = accuracy_score(y_true, y_pred)
-prec = precision_score(y_true, y_pred, zero_division=0)
-rec = recall_score(y_true, y_pred, zero_division=0)
-f05 = fbeta_score(y_true, y_pred, beta=0.5)
-f1 = fbeta_score(y_true, y_pred, beta=1.0)
-f2 = fbeta_score(y_true, y_pred, beta=2.0)
-cm = confusion_matrix(y_true, y_pred)
-
-# ------------------------------------------------------------
-# 6️⃣ 결과 출력
-# ------------------------------------------------------------
-print("\n📊 [테스트셋 평가 결과]")
-print(f"Accuracy : {acc:.4f}")
-print(f"Precision: {prec:.4f}")
-print(f"Recall   : {rec:.4f}")
-print(f"F0.5     : {f05:.4f}")
-print(f"F1       : {f1:.4f}")
-print(f"F2       : {f2:.4f}")
+print("\n📊 [전체 테스트셋 평가]")
+print(f"Accuracy : {accuracy_score(y_true, y_pred):.4f}")
+print(f"Precision: {precision_score(y_true, y_pred, zero_division=0):.4f}")
+print(f"Recall   : {recall_score(y_true, y_pred, zero_division=0):.4f}")
+print(f"F0.5     : {fbeta_score(y_true, y_pred, beta=0.5):.4f}")
+print(f"F1       : {fbeta_score(y_true, y_pred, beta=1.0):.4f}")
+print(f"F2       : {fbeta_score(y_true, y_pred, beta=2.0):.4f}")
 print(f"⏱ 예측 소요 시간: {elapsed:.2f}초")
 
-print("\nConfusion Matrix:")
-print(cm)
+# ------------------------------------------------------------
+# 6️⃣ 몰드코드별 성능 분석
+# ------------------------------------------------------------
+if "mold_code" not in test.columns:
+    print("\n⚠️ mold_code 컬럼이 없습니다.")
+else:
+    results = []
+    for mold, group in test.groupby("mold_code"):
+        y_t = group[TARGET].values
+        X_t = group.drop(columns=[TARGET] + [c for c in DROP_COLS if c in group.columns], errors="ignore")
+        y_p = model.predict_proba(X_t)[:, 1]
+        y_p = (y_p >= best_threshold).astype(int)
 
-print("\n세부 리포트:")
-print(classification_report(y_true, y_pred, digits=4))
+        acc = accuracy_score(y_t, y_p)
+        rec = recall_score(y_t, y_p, zero_division=0)
+        prec = precision_score(y_t, y_p, zero_division=0)
+        f1 = fbeta_score(y_t, y_p, beta=1.0)
+        f2 = fbeta_score(y_t, y_p, beta=2.0)
+        f05 = fbeta_score(y_t, y_p, beta=0.5)
+
+        results.append({
+            "mold_code": mold,
+            "n_samples": len(group),
+            "accuracy": acc,
+            "precision": prec,
+            "recall": rec,
+            "F0.5": f05,
+            "F1": f1,
+            "F2": f2
+        })
+
+    df_results = pd.DataFrame(results).sort_values("F1", ascending=False)
+    print("\n📦 몰드코드별 성능 요약:")
+    print(df_results.to_string(index=False, float_format="%.4f"))
