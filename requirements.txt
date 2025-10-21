@@ -6,6 +6,8 @@ seaborn
 plotly
 shiny
 shinywidgets
-scikit-learn
+scikit-learn==1.5.1
 scipy
 fpdf
+imblearn
+xgboost
