@@ -988,6 +988,7 @@ def main_page(selected_tab: str):
         "생산목표",
         plan_page_ui()  # ✅ 기존의 시뮬레이션 탭
     ),
+    id="field_tabs"
 ),
 
         
@@ -1365,6 +1366,7 @@ def main_page(selected_tab: str):
 # ======== 전체 UI ========
 app_ui = ui.page_fluid(global_head, ui.output_ui("main_ui"))
 
+
 # ======== 서버 로직 ========
 def server(input, output, session):
 # ============================================================
@@ -1566,12 +1568,39 @@ def server(input, output, session):
             html.append("</tr>")
         html.append("</table>")
 
+        legend_ui = ui.div(
+            ui.div(
+                ui.span(style="display:inline-block; width:18px; height:18px; background-color:#c7f9cc; border:1px solid #aaa; margin-right:6px; vertical-align:middle;"),
+                ui.span("달성률 100% 이상", style="vertical-align:middle; font-size:13px;"),
+                style="display:flex; align-items:center;"
+            ),
+            ui.div(
+                ui.span(style="display:inline-block; width:18px; height:18px; background-color:#fff3b0; border:1px solid #aaa; margin-right:6px; vertical-align:middle;"),
+                ui.span("달성률 80% ~ 100%", style="vertical-align:middle; font-size:13px;"),
+                style="display:flex; align-items:center;"
+            ),
+            ui.div(
+                ui.span(style="display:inline-block; width:18px; height:18px; background-color:#ffcccb; border:1px solid #aaa; margin-right:6px; vertical-align:middle;"),
+                ui.span("달성률 80% 미만", style="vertical-align:middle; font-size:13px;"),
+                style="display:flex; align-items:center;"
+            ),
+            style="""
+            display: flex; 
+            justify-content: center; 
+            gap: 20px; 
+            margin-top: 15px; 
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #eee;
+            """
+        )
+
         return ui.div(
                 ui.HTML("".join(html)),
+                legend_ui,  # ✅ 범례 UI 추가
                 ui.br(),
-                ui.output_ui("monthly_summary_button")  # ✅ 버튼 출력 추가
             )
-                
 
     # =====================================================
     # 🧮 하단 요약 텍스트
@@ -1618,98 +1647,116 @@ def server(input, output, session):
 
 
     @reactive.effect
-    @reactive.event(input.popup_report_btn, input.ref_date)  # ✅ 두 이벤트 모두 감지
+    @reactive.event(input.ref_date)  # ✅ 날짜 변경 감지
     def _():
-        ref_date_str = input.ref_date() or "2019-01-19"
-        ref_date = pd.to_datetime(ref_date_str).normalize()
-        year, month = ref_date.year, ref_date.month
-        total_days_in_month = calendar.monthrange(year, month)[1]
+        
+        # --- 🐞 디버깅 코드 시작 ---
+        # 날짜가 바뀔 때마다 현재 페이지 상태를 터미널(콘솔)에 출력합니다.
+        current_state = page_state()
+        active_tab = input.field_tabs()
+        print(f"===== 날짜 변경 감지됨 ===== 현재 페이지: {current_state}")
+        # --- 🐞 디버깅 코드 끝 ---
 
-        # 월별 데이터 필터링
-        df_month = fin_all[
-            (fin_all["real_time"].dt.year == year)
-            & (fin_all["real_time"].dt.month == month)
-        ].copy()
+        # ✅ 현재 페이지가 "field"일 때만 팝업 실행
+        if current_state == "field" and active_tab == "생산현황":
+            
+            print(f"===== '{current_state}' 페이지이므로 팝업을 실행합니다.")
+            
+            # --- 여기부터 기존 팝업 로직 ---
+            ref_date_str = input.ref_date() or "2019-01-19"
+            ref_date = pd.to_datetime(ref_date_str).normalize()
+            year, month = ref_date.year, ref_date.month
+            total_days_in_month = calendar.monthrange(year, month)[1]
 
-        if df_month.empty:
+            # 월별 데이터 필터링
+            df_month = fin_all[
+                (fin_all["real_time"].dt.year == year)
+                & (fin_all["real_time"].dt.month == month)
+            ].copy()
+
+            if df_month.empty:
+                ui.modal_show(
+                    ui.modal(
+                        ui.p(f"⚠️ {year}년 {month}월 데이터가 없습니다."),
+                        title="⚠️ 알림",
+                        easy_close=True,
+                        footer=ui.modal_button("닫기"),
+                    )
+                )
+                return
+
+            # 날짜별 생산량 계산
+            daily_df = df_month.groupby("date").size().reset_index(name="daily_prod")
+            daily_df["date"] = pd.to_datetime(daily_df["date"]).dt.normalize()
+            past_df = daily_df[daily_df["date"] <= ref_date]
+
+            if past_df.empty:
+                ui.modal_show(
+                    ui.modal(
+                        ui.p(f"⚠️ {ref_date.strftime('%Y-%m-%d')} 이전 데이터가 없습니다."),
+                        title="⚠️ 알림",
+                        easy_close=True,
+                        footer=ui.modal_button("닫기"),
+                    )
+                )
+                return
+
+            # === 기준일까지의 통계 계산 ===
+            total_prod = past_df["daily_prod"].sum()
+            avg_daily = past_df["daily_prod"].mean()
+            # ... (이하 계산 로직 동일) ...
+            total_days_so_far = past_df["date"].nunique()
+            monthly_target = avg_daily * total_days_in_month
+            achieve_rate = (total_prod / monthly_target) * 100
+    
+            remaining = max(monthly_target - total_prod, 0)
+            last_day = datetime.date(year, month, total_days_in_month)
+            remaining_days = max((last_day - ref_date.date()).days, 0)
+            daily_need = round(remaining / remaining_days, 1) if remaining_days > 0 else 0
+    
+            # 최고 / 최저 생산일
+            best_row = past_df.loc[past_df["daily_prod"].idxmax()]
+            worst_row = past_df.loc[past_df["daily_prod"].idxmin()]
+            best_day = best_row["date"]
+            worst_day = worst_row["date"]
+            best_val = best_row["daily_prod"]
+            worst_val = worst_row["daily_prod"]
+
+            # === HTML 팝업 구성 ===
+            html = f"""
+            <div style='font-size:15px; line-height:1.6;'>
+                <h4>📘 {year}년 {month}월 생산 계획 달성률 보고서</h4>
+                <hr>
+                <p>📅 기준일: <b>{ref_date.strftime('%Y-%m-%d')}</b></p>
+                <ul>
+                    <li>누적 생산량: <b>{total_prod:,.0f}ea</b></li>
+                    <li>평균 일일 생산량: <b>{avg_daily:,.0f}ea</b></li>
+                    <li>달성률: <b>{achieve_rate:.1f}%</b></li>
+                    <li>남은 목표: <b>{remaining:,.0f}ea</b></li>
+                    <li>남은 기간: <b>{remaining_days}일</b></li>
+                    <li>하루 평균 필요 생산량: <b>{daily_need:,.0f}ea</b></li>
+                </ul>
+                <hr>
+                <p>
+                🏆 최고 생산일: <b>{best_day.strftime('%Y-%m-%d')}</b> ({best_val:,}ea)<br>
+                ⚠️ 최저 생산일: <b>{worst_day.strftime('%Y-%m-%d')}</b> ({worst_val:,}ea)
+                </p>
+            </div>
+            """
+
+            # 팝업 표시
             ui.modal_show(
                 ui.modal(
-                    ui.p(f"⚠️ {year}년 {month}월 데이터가 없습니다."),
-                    title="⚠️ 알림",
+                    ui.HTML(html),
+                    title=f"📊 {year}년 {month}월 보고서",
                     easy_close=True,
                     footer=ui.modal_button("닫기"),
+                    size="xl",
                 )
             )
-            return
-
-        # 날짜별 생산량 계산
-        daily_df = df_month.groupby("date").size().reset_index(name="daily_prod")
-        daily_df["date"] = pd.to_datetime(daily_df["date"]).dt.normalize()
-        past_df = daily_df[daily_df["date"] <= ref_date]
-
-        if past_df.empty:
-            ui.modal_show(
-                ui.modal(
-                    ui.p(f"⚠️ {ref_date.strftime('%Y-%m-%d')} 이전 데이터가 없습니다."),
-                    title="⚠️ 알림",
-                    easy_close=True,
-                    footer=ui.modal_button("닫기"),
-                )
-            )
-            return
-
-        # === 기준일까지의 통계 계산 ===
-        total_prod = past_df["daily_prod"].sum()
-        avg_daily = past_df["daily_prod"].mean()
-        total_days_so_far = past_df["date"].nunique()
-        monthly_target = avg_daily * total_days_in_month
-        achieve_rate = (total_prod / monthly_target) * 100
-
-        remaining = max(monthly_target - total_prod, 0)
-        last_day = datetime.date(year, month, total_days_in_month)
-        remaining_days = max((last_day - ref_date.date()).days, 0)
-        daily_need = round(remaining / remaining_days, 1) if remaining_days > 0 else 0
-
-        # 최고 / 최저 생산일
-        best_row = past_df.loc[past_df["daily_prod"].idxmax()]
-        worst_row = past_df.loc[past_df["daily_prod"].idxmin()]
-        best_day = best_row["date"]
-        worst_day = worst_row["date"]
-        best_val = best_row["daily_prod"]
-        worst_val = worst_row["daily_prod"]
-
-        # === HTML 팝업 구성 ===
-        html = f"""
-        <div style='font-size:15px; line-height:1.6;'>
-            <h4>📘 {year}년 {month}월 생산 계획 달성률 보고서</h4>
-            <hr>
-            <p>📅 기준일: <b>{ref_date.strftime('%Y-%m-%d')}</b></p>
-            <ul>
-                <li>누적 생산량: <b>{total_prod:,.0f}ea</b></li>
-                <li>평균 일일 생산량: <b>{avg_daily:,.0f}ea</b></li>
-                <li>달성률: <b>{achieve_rate:.1f}%</b></li>
-                <li>남은 목표: <b>{remaining:,.0f}ea</b></li>
-                <li>남은 기간: <b>{remaining_days}일</b></li>
-                <li>하루 평균 필요 생산량: <b>{daily_need:,.0f}ea</b></li>
-            </ul>
-            <hr>
-            <p>
-            🏆 최고 생산일: <b>{best_day.strftime('%Y-%m-%d')}</b> ({best_val:,}ea)<br>
-            ⚠️ 최저 생산일: <b>{worst_day.strftime('%Y-%m-%d')}</b> ({worst_val:,}ea)
-            </p>
-        </div>
-        """
-
-        # 팝업 표시
-        ui.modal_show(
-            ui.modal(
-                ui.HTML(html),
-                title=f"📊 {year}년 {month}월 보고서",
-                easy_close=True,
-                footer=ui.modal_button("닫기"),
-                size="xl",
-            )
-        )
+        
+        else:
+             print(f"===== '{current_state}' 페이지이므로 팝업을 표시하지 않습니다.")
 
 
 
@@ -1929,11 +1976,25 @@ def server(input, output, session):
 
                     html += f"<div style='border:1px solid #ccc; min-height:80px; padding:4px; font-size:12px;'>{d}<br>{cell_html}</div>"
         html += "</div>"
-        return ui.div(
-                ui.HTML(html),
-                
-            )
 
+        notes_ui = ui.div(
+            ui.p("※ 몰드코드에 따른 공정 조건을 확인하세요!", style="margin-bottom: 5px;"),
+            ui.p("※ 선택한 연월의 금형 계획과 공정 조건을 확인 가능 합니다. 몰드별 최대 생산량을 고려한 조건임을 유의하세요.", style="margin-bottom: 0;"),
+            style="""
+            margin-top: 15px;
+            font-size: 13px;
+            color: #495057;
+            background-color: #f8f9fa;
+            border: 1px dashed #ced4da;
+            border-radius: 8px;
+            padding: 12px 15px;
+            """
+        )
+
+        return ui.div(
+             ui.HTML(html),
+                notes_ui  # ✅ 안내 문구 추가
+             )
     
 
 
