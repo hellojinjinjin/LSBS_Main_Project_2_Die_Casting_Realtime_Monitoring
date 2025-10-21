@@ -1115,9 +1115,9 @@ def main_page(selected_tab: str):
                         ui.nav_panel("다변량 관리도",
                             ui.input_select(
                                 "mv_group",
-                                "관리 구분 선택",
-                                choices=["공정 관리", "생산 관리", "제품 관리"],
-                                selected="공정 관리"
+                                "관리 팀 선택",  # ← 라벨 변경
+                                choices=["공정 관리 팀", "생산 관리 팀", "제품 관리 팀"],  # ← 항목 이름 변경
+                                selected="공정 관리 팀"
                             ),
                             ui.output_ui("mv_group_ui")
                         ),
@@ -1127,19 +1127,41 @@ def main_page(selected_tab: str):
                             ui.input_select(
                                 "xr_select",
                                 "단계 선택",
-                                choices=list(XR_GROUPS.keys()),
-                                selected="용융 단계"
+                                choices=[
+                                    "[공정 관리] 용융 단계",
+                                    "[공정 관리] 충진 단계",
+                                    "[공정 관리] 냉각 단계",
+                                    "[생산 관리] 생산 속도",
+                                    "[제품 관리] 제품 테스트"
+                                ],
+                                selected="[공정 관리] 용융 단계"
                             ),
                             ui.div(
-                                ui.output_plot("xr_chart", height="1200px"),
+                                ui.output_plot("xr_chart", height="1000px"),
                                 style=(
-                                    "height:1200px;"
-                                    "overflow-y:auto;"
+                                    "height:900px;"              # ✅ 컨테이너 높이 고정
+                                    "overflow-y:auto;"           # ✅ 내부 스크롤 활성화
                                     "overflow-x:hidden;"
                                     "padding:10px;"
                                     "background-color:#fff;"
                                     "border-radius:8px;"
                                     "box-shadow:0 1px 3px rgba(0,0,0,0.1);"
+                                )
+                            ),
+                            ui.br(),
+                            ui.card(
+                                ui.card_header("📋 UCL/LCL 초과 그룹 로그"),
+                                ui.output_table("xr_log_table"),
+                                style=(
+                                    "max-height:300px;"
+                                    "overflow-y:auto;"
+                                    "overflow-x:auto;"
+                                    "white-space:nowrap;"
+                                    "table-layout:fixed;"
+                                    "word-break:keep-all;"
+                                    "border-top:1px solid #ccc;"
+                                    "th { text-align:center !important; }"
+                                    "text-align:center;"
                                 )
                             )
                         ),
@@ -1445,7 +1467,17 @@ def main_page(selected_tab: str):
     )
 
 # ======== 전체 UI ========
-app_ui = ui.page_fluid(global_head, ui.output_ui("main_ui"))
+app_ui = ui.page_fluid(
+    ui.tags.style("""
+        table.dataframe, th, td {
+            text-align: center !important;
+            vertical-align: middle !important;
+        }
+    """),
+    global_head,
+    ui.output_ui("main_ui")
+)
+
 
 
 # ======== 서버 로직 ========
@@ -2248,6 +2280,79 @@ def server(input, output, session):
         }
 
         return idx, xbars, ranges, baseline
+    
+    # ============================================================
+    # 🔹 X-R 관리도 로그 생성 함수 (UCL/LCL 초과 그룹 기록)
+    # ============================================================
+    def make_xr_overlog(df, col, baseline_xr, subgroup_size=5):
+        if len(df) < subgroup_size or col not in df.columns:
+            return pd.DataFrame({"변수": [col], "메시지": ["데이터 부족으로 로그 없음."]})
+
+        # ✅ real_time 처리
+        if "real_time" in df.columns:
+            df = df.copy()
+            df["real_time"] = pd.to_datetime(df["real_time"], errors="coerce")
+            df = df.reset_index(drop=True)
+
+        num_groups = len(df) // subgroup_size
+        used_df = df.iloc[:num_groups * subgroup_size].copy()
+        groups = np.array_split(used_df[col].values, num_groups)
+
+        # ✅ 각 그룹 대표 시간
+        if "real_time" in df.columns:
+            time_groups = np.array_split(df["real_time"].iloc[:num_groups * subgroup_size], num_groups)
+            group_times = [t.iloc[-1] if not t.empty else pd.NaT for t in time_groups]
+        else:
+            group_times = [np.nan] * num_groups
+
+        xbars = np.array([g.mean() for g in groups])
+        ranges = np.array([g.max() - g.min() for g in groups])
+
+        xbar_bar = np.mean(xbars)
+        r_bar = np.mean(ranges)
+        A2, D3, D4 = 0.577, 0, 2.115
+        baseline = {
+            "UCLx": xbar_bar + A2 * r_bar,
+            "LCLx": xbar_bar - A2 * r_bar,
+            "UCLr": D4 * r_bar,
+            "LCLr": D3 * r_bar,
+        }
+
+        logs = []
+        for i, (x, r, t) in enumerate(zip(xbars, ranges, group_times), start=1):
+            if x > baseline["UCLx"] or x < baseline["LCLx"]:
+                logs.append({
+                    "구분": "Xbar",
+                    "그룹번호": i,
+                    "시간": t.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(t) else "",
+                    "값": round(x, 3),
+                    "한계": f"{baseline['LCLx']:.3f} ~ {baseline['UCLx']:.3f}"
+                })
+            if r > baseline["UCLr"]:
+                logs.append({
+                    "구분": "Range",
+                    "그룹번호": i,
+                    "시간": t.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(t) else "",
+                    "값": round(r, 3),
+                    "한계": f"≤ {baseline['UCLr']:.3f}"
+                })
+
+        # ✅ 변수 및 메시지 컬럼 추가
+        if not logs:
+            return pd.DataFrame({
+                "변수": [col],
+                "메시지": ["✅ 모든 그룹이 관리범위 내입니다."],
+                "구분": [""],
+                "그룹번호": [""],
+                "시간": [""],
+                "값": [""],
+                "한계": [""]
+            })
+        else:
+            df_log = pd.DataFrame(logs)
+            df_log.insert(0, "변수", col)
+            df_log.insert(1, "메시지", "⚠️ 관리범위를 벗어난 그룹이 존재합니다.")
+            return df_log
 
 
     # ───────────────────────────────
@@ -2542,16 +2647,16 @@ def server(input, output, session):
             return make_placeholder_chart("제품 테스트")
     
     # ============================================================
-    # 🔹 X-R 관리도 출력 (Shiny 렌더) — 슬라이딩형 버전
+    # 🔹 X-R 관리도 출력 (Shiny 렌더) — 고정 높이 + 로그 아래 배치용
     # ============================================================
     @output
     @render.plot
     def xr_chart():
         import matplotlib.pyplot as plt
 
-        # ✅ 전체 누적 데이터 사용 (tail 제한 없음)
         df = current_data()
         stage = input.xr_select()
+        stage = stage.split("] ")[-1]
 
         if stage not in XR_GROUPS:
             fig, ax = plt.subplots()
@@ -2561,13 +2666,16 @@ def server(input, output, session):
 
         cols = XR_GROUPS[stage]
         n = len(cols)
-        n_rows = max(n, 2)
-        fig, axes = plt.subplots(n_rows, 2, figsize=(12, 8))
-        if n_rows == 1:
-            axes = np.array([axes])
+        MAX_POINTS = 30
+        SUBGROUP_SIZE = 5
 
-        MAX_POINTS = 30       # ✅ 최근 30개 그룹만 표시
-        SUBGROUP_SIZE = 5     # ✅ 그룹 크기 고정
+        # ✅ 모든 변수별 subplot 높이를 일정하게 고정 (2.2 inch/col)
+        fig_height = n * 2.2
+        fig, axes = plt.subplots(n, 2, figsize=(12, fig_height), sharex=False)
+        plt.subplots_adjust(hspace=0.6)
+
+        if n == 1:
+            axes = np.array([axes])
 
         for i, (col, label) in enumerate(cols):
             result = calc_realtime_xr(df, col, BASELINE_XR, subgroup_size=SUBGROUP_SIZE)
@@ -2582,13 +2690,13 @@ def server(input, output, session):
             idx, xbars, ranges, baseline = result
             total_points = len(idx)
 
-            # ✅ 최근 30개만 표시 (슬라이딩 윈도우)
+            # ✅ 최근 30개 그룹만 표시
             if total_points > MAX_POINTS:
                 idx = idx[-MAX_POINTS:]
                 xbars = xbars[-MAX_POINTS:]
                 ranges = ranges[-MAX_POINTS:]
 
-            # ✅ Xbar 관리도
+            # 🔹 Xbar 관리도
             ax1.plot(idx, xbars, "o-", color="steelblue")
             ax1.axhline(baseline["UCLx"], color="red", ls="--")
             ax1.axhline(baseline["LCLx"], color="red", ls="--")
@@ -2597,7 +2705,7 @@ def server(input, output, session):
             ax1.grid(True, alpha=0.3)
             ax1.set_xlim(max(1, total_points - MAX_POINTS + 1) - 0.5, total_points + 0.5)
 
-            # ✅ R 관리도
+            # 🔹 R 관리도
             ax2.plot(idx, ranges, "o-", color="darkorange")
             ax2.axhline(baseline["UCLr"], color="red", ls="--")
             ax2.axhline(baseline["LCLr"], color="red", ls="--")
@@ -2704,6 +2812,152 @@ def server(input, output, session):
         except Exception as e:
             print("❌ XR 품질 단계 오류:", e)
             return make_placeholder_chart("제품 테스트 X-R 관리도")
+    
+    
+    # ============================================================
+    # 🔹 용융 단계 X-R 로그
+    # ============================================================
+    @output
+    @render.table
+    def xr_log_melting():
+        try:
+            df = current_data().tail(200)
+            cols = ["molten_temp", "molten_volume"]
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
+            merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
+            return merged.reset_index(drop=True)
+        except Exception as e:
+            print("❌ XR 용융 로그 오류:", e)
+            return pd.DataFrame({"메시지": ["로그 생성 중 오류 발생."]})
+
+
+    # ============================================================
+    # 🔹 충진 단계 X-R 로그
+    # ============================================================
+    @output
+    @render.table
+    def xr_log_filling():
+        try:
+            df = current_data().tail(200)
+            cols = ["sleeve_temperature", "EMS_operation_time",
+                    "low_section_speed", "high_section_speed", "cast_pressure"]
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
+            merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
+            return merged.reset_index(drop=True)
+        except Exception as e:
+            print("❌ XR 충진 로그 오류:", e)
+            return pd.DataFrame({"메시지": ["로그 생성 중 오류 발생."]})
+
+
+    # ============================================================
+    # 🔹 냉각 단계 X-R 로그
+    # ============================================================
+    @output
+    @render.table
+    def xr_log_cooling():
+        try:
+            df = current_data().tail(200)
+            reverse_map = {v: k for k, v in label_map.items()}
+            df = df.rename(columns=reverse_map)
+            cols = ["upper_mold_temp1", "upper_mold_temp2",
+                    "lower_mold_temp1", "lower_mold_temp2", "Coolant_temperature"]
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols if c in df.columns]
+            merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
+            return merged.reset_index(drop=True)
+        except Exception as e:
+            print("❌ XR 냉각 로그 오류:", e)
+            return pd.DataFrame({"메시지": ["로그 생성 중 오류 발생."]})
+
+
+    # ============================================================
+    # 🔹 생산 속도 X-R 로그
+    # ============================================================
+    @output
+    @render.table
+    def xr_log_speed():
+        try:
+            df = current_data().tail(200)
+            cols = ["facility_operation_cycleTime", "production_cycletime"]
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
+            merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
+            return merged.reset_index(drop=True)
+        except Exception as e:
+            print("❌ XR 속도 로그 오류:", e)
+            return pd.DataFrame({"메시지": ["로그 생성 중 오류 발생."]})
+
+
+    # ============================================================
+    # 🔹 제품 테스트 X-R 로그
+    # ============================================================
+    @output
+    @render.table
+    def xr_log_quality():
+        try:
+            df = current_data().tail(200)
+            cols = ["biscuit_thickness", "physical_strength"]
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
+            merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
+            return merged.reset_index(drop=True)
+        except Exception as e:
+            print("❌ XR 품질 로그 오류:", e)
+            return pd.DataFrame({"메시지": ["로그 생성 중 오류 발생."]})
+
+    @output
+    @render.table
+    def xr_log_table():
+        stage = input.xr_select()
+        stage = stage.split("] ")[-1]
+        df = current_data().tail(200)
+
+        stage_cols = {
+            "용융 단계": ["molten_temp", "molten_volume"],
+            "충진 단계": ["sleeve_temperature", "EMS_operation_time",
+                         "low_section_speed", "high_section_speed", "cast_pressure"],
+            "냉각 단계": ["upper_mold_temp1", "upper_mold_temp2",
+                        "lower_mold_temp1", "lower_mold_temp2", "Coolant_temperature"],
+            "생산 속도": ["facility_operation_cycleTime", "production_cycletime"],
+            "제품 테스트": ["biscuit_thickness", "physical_strength"],
+        }
+
+        if stage not in stage_cols:
+            return pd.DataFrame({"메시지": ["단계 선택 필요."]})
+
+        try:
+            cols = stage_cols[stage]
+
+            # ✅ 각 변수별 로그 생성 (make_xr_overlog는 완성된 DF 반환)
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
+            merged = pd.concat(logs, ignore_index=True)
+
+            # ✅ 한글 컬럼명 매핑
+            col_name_map = {
+                "molten_temp": "용융 온도",
+                "molten_volume": "주입한 금속 양",
+                "sleeve_temperature": "주입 관 온도",
+                "EMS_operation_time": "전자 교반(EMS) 가동 시간",
+                "low_section_speed": "하위 구간 주입 속도",
+                "high_section_speed": "상위 구간 주입 속도",
+                "cast_pressure": "주입 압력",
+                "upper_mold_temp1": "상부1 금형 온도",
+                "upper_mold_temp2": "상부2 금형 온도",
+                "lower_mold_temp1": "하부1 금형 온도",
+                "lower_mold_temp2": "하부2 금형 온도",
+                "Coolant_temperature": "냉각수 온도",
+                "facility_operation_cycleTime": "설비 사이클 시간",
+                "production_cycletime": "생산 사이클 시간",
+                "biscuit_thickness": "주조물 두께",
+                "physical_strength": "제품 강도",
+            }
+
+            # ✅ 변수명 한글로 변경
+            merged["변수"] = merged["변수"].replace(col_name_map)
+            merged.fillna("", inplace=True)
+            return merged
+
+        except Exception as e:
+            print("❌ XR 로그 테이블 오류:", e)
+            import traceback; traceback.print_exc()
+            return pd.DataFrame({"메시지": ["로그 표시 중 오류 발생."]})
 
 
 
@@ -2733,7 +2987,7 @@ def server(input, output, session):
     def mv_group_ui():
         group = input.mv_group()
     
-        if group == "공정 관리":
+        if group == "공정 관리 팀":
             return ui.layout_columns(
                 ui.card(
                     ui.output_plot("mv_chart_melting"),
@@ -2783,7 +3037,7 @@ def server(input, output, session):
                 col_widths=[4, 4, 4]
             )
     
-        elif group == "생산 관리":
+        elif group == "생산 관리 팀":
             return ui.layout_columns(
                 ui.card(
                     ui.output_plot("mv_chart_speed"),
@@ -2803,7 +3057,7 @@ def server(input, output, session):
                 col_widths=[12]
             )
     
-        elif group == "제품 관리":
+        elif group == "제품 관리 팀":
             return ui.layout_columns(
                 ui.card(
                     ui.output_plot("mv_chart_quality"),
