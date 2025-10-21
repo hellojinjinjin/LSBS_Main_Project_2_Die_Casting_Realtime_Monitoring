@@ -11,3 +11,4 @@ scipy
 fpdf
 imblearn
 xgboost
+Jinja2
