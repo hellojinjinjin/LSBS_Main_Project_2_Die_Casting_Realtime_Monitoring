@@ -392,6 +392,7 @@ label_map = {
     "emergency_stop": "비상 정지 여부 (ON / OFF)",
     "registration_time": "데이터 등록 시간",
     "tryshot_signal": "측정 딜레이 여부",
+    "real_time" : "실제 등록 시간",
 
     # 용융 단계
     "molten_temp": "용융 온도",
@@ -1172,13 +1173,13 @@ def main_page(selected_tab: str):
 
                 # ──────────────── 2행: 실시간 데이터 표 ────────────────
                 ui.card(
-                    ui.card_header("📊 실시간 데이터"),
+                    ui.card_header("📊 실시간 데이터", style="text-align:center;"),
                     ui.div(
                         ui.output_data_frame("recent_data_table"),
                         # 🔹 스크롤이 생기도록 wrapping div에 명시적 width/overflow 지정
                         style=(
                             "width:100%; "
-                            "overflow-x:auto; overflow-y:auto; "  # 가로/세로 스크롤 모두 허용
+                            "overflow:visible; "  # 가로/세로 스크롤 모두 허용
                             "max-height:500px; "  # 너무 길면 세로 스크롤
                             "display:block;"
                         )
