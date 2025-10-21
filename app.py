@@ -3127,9 +3127,9 @@ def server(input, output, session):
 
     def _get_shift(t):
         if datetime.time(8,0) <= t.time() < datetime.time(20,0):
-            return "Day"
+            return "주간"
         else:
-            return "Night"
+            return "야간"
 
     streaming_df["prod_date"] = streaming_df["real_time"].apply(_get_prod_date)
     streaming_df["shift"] = streaming_df["real_time"].apply(_get_shift)
@@ -3165,10 +3165,10 @@ def server(input, output, session):
 
         # --- 현재 교대 구간 ---
         if datetime.time(8,0) <= now.time() < datetime.time(20,0):
-            current_shift = "Day"
+            current_shift = "주간"
             shift_start = datetime.datetime.combine(now.date(), datetime.time(8,0))
         else:
-            current_shift = "Night"
+            current_shift = "야간"
             if now.time() >= datetime.time(20,0):
                 shift_start = datetime.datetime.combine(now.date(), datetime.time(20,0))
             else:
