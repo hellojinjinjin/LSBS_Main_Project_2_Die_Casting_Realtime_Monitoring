@@ -854,7 +854,9 @@ def floating_stream_bar():
                 "background-color:#fef6ee; border:1px solid #e0c8a0;"
                 "border-bottom:none; border-radius:8px 8px 0 0;"
                 "padding:8px 16px; position:absolute; top:65px; right:40px;"
-                "z-index:1500; font-weight:bold; color:#5c4b3b;"
+                # 🔽 z-index를 낮춤 (1500 → 900)
+                "z-index:900; font-weight:bold; color:#5c4b3b;"
+                "backdrop-filter:blur(2px);"  # 💡선택: 흐림 효과 보완
             )
         },
         ui.div("스트리밍 제어", style="font-weight:bold; font-size:15px;"),
@@ -863,9 +865,7 @@ def floating_stream_bar():
         # 시간 표시 (고정폭)
         ui.div(
             ui.output_ui("stream_time_display"),
-            style=(
-                "font-size:14px; width:180px; text-align:center; white-space:nowrap;"
-            ),
+            style="font-size:14px; width:180px; text-align:center; white-space:nowrap;",
         ),
 
         # 버튼 그룹
