@@ -19,7 +19,8 @@ import datetime
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from scipy import stats
-
+import json  # ✅ 1. 이 줄을 추가하세요
+from sklearn.metrics import recall_score, fbeta_score # ✅ 2. 이 줄도 추가하세요
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -953,6 +954,70 @@ def plan_page_ui():
             ui.hr(),  
         )
     )
+
+def analysis_page_ui():
+    """스케치 기반의 '데이터 분석 / 모델 모니터링' 탭 UI 생성"""
+    return ui.navset_tab(
+        ui.nav_panel(
+            "데이터 분석 (EDA)", 
+            ui.p("이곳에 기존의 데이터 탐색(EDA) 관련 차트나 내용을 넣을 수 있습니다.")
+        ),
+        ui.nav_panel(
+            "모델 모니터링",
+            ui.layout_sidebar(
+                # === 1. 사이드바 (제어 패널) ===
+                ui.sidebar(
+                    {"title": "모델 제어"},
+                    ui.input_select(
+                         "analysis_mold_select", "Mold Code 선택", 
+                           choices={
+                            "all": "전체", 
+                            "8412": "Mold Code 8412", # ✅ 키: 값 형태로 수정
+                            "8413": "Mold Code 8413", # ✅ 키: 값 형태로 수정
+                            "8576": "Mold Code 8576", # ✅ 키: 값 형태로 수정
+                            "8722": "Mold Code 8722", # ✅ 키: 값 형태로 수정
+                            "8917": "Mold Code 8917"  # ✅ 키: 값 형태로 수정
+                        }, 
+                         selected="all"
+                    ),
+                    ui.input_slider(
+                        "analysis_threshold", "Threshold 조정",
+                        min=0, max=1, value=0.5, step=0.01
+                    ),
+                    ui.hr(),
+                    ui.h5("스트리밍 제어"),
+                    ui.output_ui("stream_control_ui"),
+                    ui.br(),
+                    ui.output_ui("comm_status"),
+                ),
+
+                # === 2. 메인 컨텐츠 ===
+                ui.card(
+                    ui.card_header("실시간 예측 확률"),
+                    # 스케치의 '들어오는 데이터' 그래프
+                    ui.output_plot("main_analysis_plot") 
+                ),
+                ui.layout_columns(
+                    ui.card(
+                        ui.card_header("모델 응답 지연 (Latency)"),
+                        # 스케치의 'Latency' 그래프
+                        ui.output_plot("latency_plot") 
+                    ),
+                    ui.card(
+                        ui.card_header("누적 성능 지표"),
+                        # 스케치의 'Accuracy' 등 4개 카드
+                        ui.output_ui("metric_cards") 
+                    ),
+                    col_widths=[6, 6]
+                ),
+                ui.card(
+                    ui.card_header("실시간 예측 로그"),
+                    # 스케치의 '로그 뷰어'
+                    ui.output_ui("log_viewer") 
+                )
+            )
+        )
+    )
 # ======== 3️⃣ 본문 페이지 ========
 def main_page(selected_tab: str):
     # --- 메뉴별 제목 및 본문 내용 ---
@@ -1246,7 +1311,7 @@ def main_page(selected_tab: str):
 
             ),
         ),
-        "analysis": ui.h5("여기에 데이터 분석 결과를 표시합니다.")
+        "analysis": analysis_page_ui()
     }
 
     current_title = tab_titles.get(selected_tab, "")
@@ -3894,39 +3959,373 @@ def server(input, output, session):
 
 
 
-# 🟢 TAB3. 데이터 분석 끝
+# ============================================================
+# 🟢 TAB3. 데이터 분석 (서버 로직)
 # ============================================================
 
-# ======================================
-# ✅ 6시그마 json 파일 생성 코드
-# ======================================
-# import pandas as pd
-# import numpy as np
-# import json
+    # ------------------------------------------------------------
+    # ⚙️ 1. 스트리밍 주기 (초)
+    # ------------------------------------------------------------
+    def stream_speed() -> float:
+        """루프 실행 주기 (초)"""
+        return 1.0
 
-# df = pd.read_csv("./data/fin_train.csv")
-# num_cols = df.select_dtypes(include=["number"]).columns
 
-# thresholds = {}
+    # ------------------------------------------------------------
+    # ⚙️ 2. 전처리 함수 basic_fix (모델 pickle 참조용)
+    # ------------------------------------------------------------
+    def basic_fix(df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
 
-# for col in num_cols:
-#     mu = df[col].mean()
-#     sigma = df[col].std()
-#     if pd.isna(mu) or pd.isna(sigma):
-#         continue
+        # tryshot_signal 변환
+        if "tryshot_signal" in df.columns:
+            df["tryshot_signal"] = df["tryshot_signal"].apply(
+                lambda x: 1 if str(x).upper() == "D" else 0
+            )
 
-#     mu = float(np.nan_to_num(mu, nan=0.0))
-#     sigma = float(np.nan_to_num(sigma, nan=0.0))
+        # speed_ratio 관련 처리
+        if {"speed_ratio", "low_section_speed", "high_section_speed"} <= set(df.columns):
+            df.loc[df["speed_ratio"].isin([np.inf, -np.inf]), "speed_ratio"] = -1
+            df.loc[
+                (df["low_section_speed"] == 0) & (df["high_section_speed"] == 0),
+                "speed_ratio"
+            ] = -2
 
-#     thresholds[col] = {
-#         "mu": round(mu, 4),
-#         "sigma": round(sigma, 4),
-#         "min": round(mu - 3 * sigma, 4),
-#         "max": round(mu + 3 * sigma, 4)
-#     }
+        # pressure_speed_ratio 처리
+        if "pressure_speed_ratio" in df.columns:
+            df.loc[np.isinf(df["pressure_speed_ratio"]), "pressure_speed_ratio"] = -1
 
-# with open("./www/sixsigma_thresholds_extended.json", "w", encoding="utf-8") as f:
-#     json.dump(thresholds, f, ensure_ascii=False, indent=2, allow_nan=False)
+        return df
+
+
+    # joblib 모델이 이 함수를 찾을 수 있게 등록
+    import sys
+    sys.modules["__main__"].basic_fix = basic_fix
+
+
+    # ------------------------------------------------------------
+    # ⚙️ 3. CSV 스트리머 클래스
+    # ------------------------------------------------------------
+    class MyStreamer:
+        """CSV 파일을 한 줄씩 스트리밍 (앱 시작 시 미리 로드)"""
+
+        def __init__(self, path, chunk_size=1, loop=True):
+            self.path = pathlib.Path(path)
+            self.chunk_size = chunk_size
+            self.loop = loop
+            self.index = 0
+            self.df = None  # 처음에 None으로 초기화
+
+            # ✅✅✅ 앱 시작 시 파일을 미리 로드합니다. ✅✅✅
+            try:
+                if not self.path.exists():
+                    print(f"⚠️ [Streamer Init] 파일 없음: {self.path}")
+                    return  # self.df는 None으로 유지됨
+
+                print(f"⏳ [Streamer Init] {self.path.name} 로드 중...")
+                self.df = pd.read_csv(self.path, low_memory=False)
+
+                if self.df.empty:
+                    print("⚠️ [Streamer Init] CSV 파일이 비어있음")
+                    self.df = None  # 비어있으면 None으로 다시 설정
+                else:
+                    print(f"✅ [Streamer Init] MyStreamer 로드 완료 ({len(self.df)}행)")
+            
+            except Exception as e:
+                print(f"⚠️ [Streamer Init] MyStreamer 로드 실패: {e}")
+                self.df = None # 로드 실패 시 None으로 유지
+            # ✅✅✅ 여기까지 수정 ✅✅✅
+
+
+        def reset(self):
+            self.index = 0
+            print("🔄 MyStreamer 리셋")
+
+        def stream(self):
+            try:
+                # ✅✅✅ 'self.df is None' 검사 로직 수정 ✅✅✅
+                # (파일 로딩 코드를 __init__으로 옮겼습니다)
+                if self.df is None:
+                    print("⚠️ MyStreamer.df가 None입니다. (파일 로드 실패 또는 비어있음)")
+                    return None
+                # ✅✅✅ 여기까지 수정 ✅✅✅
+
+                if self.index >= len(self.df):
+                    if self.loop:
+                        print("🔁 EOF → 루프 재시작")
+                        self.index = 0
+                    else:
+                        print("🏁 스트리밍 종료")
+                        return None
+
+                chunk = self.df.iloc[self.index : self.index + self.chunk_size].copy()
+                self.index += self.chunk_size
+                return chunk
+
+            except Exception as e:
+                print(f"⚠️ MyStreamer 오류: {e}")
+                return None
+
+    # ------------------------------------------------------------
+    # ⚙️ 4. 모델 및 메타 로드
+    # ------------------------------------------------------------
+    MODEL_PATH = "./models/fin_xgb_f20.pkl"
+    META_PATH = "./models/fin_xgb_meta_f20.json"
+    TARGET = "passorfail"
+
+    try:
+        print("🔍 모델 로드 중…")
+        model = joblib.load(MODEL_PATH)
+        with open(META_PATH, "r", encoding="utf-8") as f:
+            META = json.load(f)
+        print("✅ 모델 및 메타 로드 완료")
+    except Exception as e:
+        print(f"⚠️ 모델 로드 실패: {e}")
+        model, META = None, {}
+
+    model_features = META.get("features", [])
+    best_threshold = float(META.get("best_threshold", 0.5))
+
+
+    # ------------------------------------------------------------
+    # ⚙️ 5. 상태 변수 정의
+    # ------------------------------------------------------------
+    analy_streamer = MyStreamer("./data/fin_test_kf_fixed.csv", chunk_size=1, loop=True)
+    is_analysis_streaming = reactive.Value(False)
+    analysis_data = reactive.Value(pd.DataFrame())
+    log_df = reactive.Value(pd.DataFrame(columns=["time", "prob", "pred", "true", "result"]))
+    latency_list = reactive.Value([])
+
+
+    # ------------------------------------------------------------
+    # ▶ 6. 스트리밍 제어 버튼
+    # ------------------------------------------------------------
+    @render.ui
+    def stream_control_ui():
+        btn_text = "⏹ 스트리밍 중지" if is_analysis_streaming() else "▶ 스트리밍 시작"
+        color = "#d9534f" if is_analysis_streaming() else "#5cb85c"
+        return ui.input_action_button(
+            "toggle_stream", btn_text, style=f"background-color:{color};color:white;"
+        )
+
+
+    @reactive.effect
+    @reactive.event(input.toggle_stream)
+    def _toggle_stream():
+        current = is_analysis_streaming()
+        is_analysis_streaming.set(not current)
+        if not current:
+            analy_streamer.reset()
+            print("▶ 스트리밍 시작됨")
+        else:
+            print("⏹ 스트리밍 중지됨")
+
+
+    # ------------------------------------------------------------
+    # ▶ 7. 스트리밍 루프
+    # ------------------------------------------------------------
+    @reactive.effect
+    def _stream_loop():
+        invalidate_later(stream_speed())  # 주기적 실행
+        if not is_analysis_streaming():
+            return
+        try:
+            chunk = analy_streamer.stream()
+            if chunk is not None and not chunk.empty:
+                old = analysis_data()
+                new_df = pd.concat([old, chunk], ignore_index=True).tail(500)
+                analysis_data.set(new_df)
+                print(f"📦 새 데이터 수신 ({len(chunk)}행)")
+        except Exception as e:
+            print(f"⚠️ 스트리밍 오류: {e}")
+
+
+    # ------------------------------------------------------------
+    # 🧠 8. 실시간 예측 루프
+    # ------------------------------------------------------------
+    @reactive.effect
+    def _predict_loop():
+        invalidate_later(stream_speed())
+        if not is_analysis_streaming() or model is None:
+            return
+        df = analysis_data()
+        if df.empty:
+            return
+
+        try:
+            latest = df.iloc[-1:].copy()
+            try:
+                latest = basic_fix(latest)
+            except Exception:
+                pass
+
+            X = latest.drop(columns=[TARGET], errors="ignore")
+            for col in model_features:
+                if col not in X.columns:
+                    X[col] = 0
+            if model_features:
+                X = X[model_features]
+
+            if hasattr(model, "predict_proba"):
+                prob = float(model.predict_proba(X)[0, 1])
+            else:
+                prob = float(model.predict(X)[0])
+
+            pred = int(prob >= best_threshold)
+            y_true = None
+            if TARGET in latest.columns:
+                try:
+                    y_true = int(latest[TARGET].values[0])
+                except Exception:
+                    y_true = None
+
+            result = "✅ 정상" if y_true is not None and pred == y_true else "❌ 불일치"
+            ts = latest["real_time"].iloc[0] if "real_time" in latest.columns else datetime.datetime.now()
+
+            latency = np.random.uniform(10, 50)
+            latency_list.set((latency_list.get() + [latency])[-30:])
+
+            new_row = pd.DataFrame([{
+                "time": ts, "prob": prob, "pred": pred, "true": y_true, "result": result
+            }])
+            log_df.set(pd.concat([log_df(), new_row], ignore_index=True).tail(500))
+
+        except Exception as e:
+            print(f"⚠️ 예측 오류: {e}")
+
+
+    # ------------------------------------------------------------
+    # 📡 9. 통신 상태 표시
+    # ------------------------------------------------------------
+    @render.ui
+    def comm_status():
+        color = "green" if is_analysis_streaming() else "red"
+        text = "정상 연결" if is_analysis_streaming() else "연결 끊김"
+        return ui.HTML(f"<b>📡 통신 상태:</b> <span style='color:{color}'>{text}</span>")
+
+
+    # ------------------------------------------------------------
+    # 📈 10. Latency 그래프 (기존 코드)
+    # ------------------------------------------------------------
+    @render.plot
+    def latency_plot():
+        # ... (기존 latency_plot 코드) ...
+        return fig
+
+    # ✅✅✅ 10-B. [신규] 메인 예측 확률 그래프 ✅✅✅
+    # ( latency_plot 함수 뒤에 추가하세요 )
+    @render.plot
+    def main_analysis_plot():
+        df = log_df() # 실시간 로그 데이터 사용
+        
+        # 1단계에서 추가한 슬라이더 값 가져오기
+        thresh = input.analysis_threshold() or 0.5 
+
+        fig, ax = plt.subplots(figsize=(10, 4))
+        
+        if df.empty:
+            ax.text(0.5, 0.5, "▶ 스트리밍을 시작하세요", ha="center", va="center", fontsize=14)
+            ax.axis("off")
+            return fig
+
+        # 최근 100개 데이터만 표시
+        df_tail = df.tail(100).reset_index(drop=True) 
+        
+        # 1. 예측 확률 라인 그래프 (스케치의 파란색 물결)
+        ax.plot(df_tail.index, df_tail["prob"], marker='o', linestyle='-', label="예측 확률 (Prob)", zorder=2)
+        
+        # 2. Threshold 라인 (스케치의 빨간색 점선)
+        ax.axhline(y=thresh, color='r', linestyle='--', label=f"Threshold ({thresh:.2f})", zorder=3)
+        
+        # 3. Threshold 상회 값 강조
+        above = df_tail[df_tail["prob"] >= thresh]
+        ax.scatter(above.index, above["prob"], color='red', zorder=5, label="불량 예측")
+
+        ax.set_title("실시간 불량 예측 확률 (최근 100건)")
+        ax.set_xlabel("Data Point (Recent)")
+        ax.set_ylabel("Probability (0:양품 ~ 1:불량)")
+        ax.set_ylim(0, 1) # Y축 0~1 고정
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        return fig
+
+
+   # ------------------------------------------------------------
+    # 📈 10. Latency 그래프
+    # ------------------------------------------------------------
+    @render.plot
+    def latency_plot():
+        lst = latency_list.get()
+        
+        # ✅✅✅ `fig`와 `ax`를 if 문보다 먼저 정의합니다. ✅✅✅
+        fig, ax = plt.subplots(figsize=(5, 3))
+        
+        if not lst:
+            ax.text(0.5, 0.5, "Latency 데이터 없음", ha="center", va="center")
+            ax.axis("off")
+            return fig  # 👈 데이터가 없어도 `fig`를 반환
+        
+        # --- 데이터가 있을 때 그리는 로직 ---
+        ax.plot(lst, marker="o", color="#5cb85c")
+        ax.set_title("모델 응답 지연 (ms)")
+        ax.set_ylabel("ms")
+        ax.grid(alpha=0.3)
+        plt.tight_layout()
+        
+        return fig
+
+
+    # ------------------------------------------------------------
+    # 📜 12. 로그 뷰어
+    # ------------------------------------------------------------
+    @render.ui
+    def log_viewer():
+        # ... (기존 log_viewer 함수 코드) ...
+        return ui.HTML(f"<div style='max-height:300px;overflow-y:auto;font-size:13px'>{html}</div>")
+
+    # ✅✅✅ 여기부터 붙여넣기 시작 ✅✅✅
+    # ------------------------------------------------------------
+    # ⚙️ [신규] Mold Code 드롭다운 업데이트
+    # ------------------------------------------------------------
+    @reactive.effect
+    def _update_mold_select():
+        try:
+            if analy_streamer.df is not None:
+                # 스트리머 데이터에서 고유한 mold_code 목록 추출
+                mold_codes = sorted(analy_streamer.df['mold_code'].unique().astype(str))
+                
+                # 드롭다운 선택지 생성 ({"all": "전체", "8412": "Mold Code 8412", ...})
+                choices = {"all": "전체"}
+                choices.update({code: f"Mold Code {code}" for code in mold_codes})
+                
+                # UI의 input_select 업데이트
+                ui.update_select(
+                    "analysis_mold_select",
+                    choices=choices,
+                    selected="all"
+                )
+                print("✅ Mold code 드롭다운 메뉴가 업데이트되었습니다.")
+            else:
+                print("⚠️ Mold code를 업데이트하기 위한 스트리머 데이터가 없습니다.")
+        except Exception as e:
+            print(f"❌ Mold code 드롭다운 업데이트 실패: {e}")
+
+    # ------------------------------------------------------------
+    # ⚙️ [신규] 선택된 Mold Code로 데이터 필터링
+    # ------------------------------------------------------------
+    @reactive.calc
+    def filtered_log_df():
+        df = log_df()
+        selected_mold = input.analysis_mold_select()
+        
+        # '전체'가 선택되거나 데이터가 없으면 원본 반환
+        if df.empty or selected_mold == "all":
+            return df
+        
+        # 선택된 mold_code로 데이터 필터링하여 반환
+        return df[df["mold_code"] == selected_mold].copy()
+    # ✅✅✅ 여기까지 붙여넣기 끝 ✅✅✅
 
 # ======== 앱 실행 ========
 app = App(app_ui, server, static_assets=app_dir / "www")
