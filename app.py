@@ -989,7 +989,6 @@ def make_dynamic_svg(sensor_list: list[str]) -> str:
 
 
 
-### ⬇️⬇️⬇️ 1단계: 여기에 아래 함수 코드를 통째로 추가하세요. ⬇️⬇️⬇️ ###
 
 def plan_page_ui():
     """생산계획 탭의 UI를 반환하는 함수"""
@@ -1110,9 +1109,6 @@ def main_page(selected_tab: str):
 ),
 
         
-
-
-
         # 🧭 품질 모니터링 (예측 시뮬레이션 UI 포함)
         "quality": ui.navset_tab(
             ui.nav_panel("실시간 관리도",
@@ -1158,6 +1154,14 @@ def main_page(selected_tab: str):
 
             ui.nav_panel("원인 분석",
 
+                ui.card(
+                    ui.card_header("불량 및 공정 에러 발생 조건", style="text-align:center;"),
+                    ui.output_plot("local_factor_plot", click=True),   # 클릭 가능한 그래프
+                    ui.hr(),
+                    ui.output_ui("local_factor_desc"),      # 텍스트 설명
+                    ui.output_ui("sensor_detail_modal")     # 클릭 시 뜨는 모달창
+                ),
+
                 # ──────────────── 2행: 실시간 데이터 표 ────────────────
                 ui.card(
                     ui.card_header("📊 실시간 데이터"),
@@ -1174,13 +1178,6 @@ def main_page(selected_tab: str):
                     style="width:100%;"
                 ),
 
-                ui.card(
-                    ui.card_header("불량 및 공정 에러 발생 조건", style="text-align:center;"),
-                    ui.output_plot("local_factor_plot", click=True),   # 클릭 가능한 그래프
-                    ui.hr(),
-                    ui.output_ui("local_factor_desc"),      # 텍스트 설명
-                    ui.output_ui("sensor_detail_modal")     # 클릭 시 뜨는 모달창
-                ),
             ),
 
             # =========================================
