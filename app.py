@@ -30,7 +30,6 @@ plt.ioff()
 from shared import streaming_df, kf_streaming_df, RealTimeStreamer, KFStreamer
 import plotly.express as px
 import plotly.graph_objects as go
-import datetime
 from shiny import ui, render, reactive
 
 # ==========================================
@@ -3208,8 +3207,6 @@ def server(input, output, session):
     @output
     @render.ui
     def process_status_card():
-        import datetime
-
         df_live = current_data()
 
         if df_live is None or df_live.empty:
