@@ -418,40 +418,6 @@ svg_code = f"""
 </svg>
 """
 
-# ===== CSS (카드 전체 클릭영역) =====
-card_click_css = """
-<style>
-/* 개요 전용 카드만 hover 효과 */
-.overview-card {
-    transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
-    position: relative;
-}
-
-.overview-card:hover {
-    background-color: #f8f9fa !important;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    transform: translateY(-2px);
-}
-
-/* 카드 전체를 클릭 가능하게 하는 투명 버튼 */
-.card-link {
-    position: absolute;
-    inset: 0;
-    z-index: 10;
-    cursor: pointer;
-    background: transparent !important;
-    border: none !important;
-    padding: 0 !important;
-}
-.card-link:hover,
-.card-link:focus,
-.card-link:active {
-    background: transparent !important;
-    box-shadow: none !important;
-}
-</style>
-"""
-
 # ========== 데이터 준비 ==========
 train = pd.read_csv("./data/train_raw.csv")
 train["time"] = pd.to_datetime(train["time"], errors="coerce")
@@ -719,12 +685,12 @@ def menu_page():
                     "display:flex; flex-direction:column; align-items:center;"
                 )
             },
-            ui.h3("메뉴 선택", style="margin-bottom:30px; font-weight:bold;"),
+            ui.h3("주조 공정 불량 예측 대시보드", style="margin-bottom:30px; font-weight:bold;"),
             ui.div(
                 {
                     "style": (
                         "display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); "
-                        "gap:20px; width:80%; max-width:800px;"
+                        "gap:20px; width:80%; max-width:1800px;"
                     )
                 },
                 # 📊 현장 대시보드
@@ -741,6 +707,10 @@ def menu_page():
                             "font-weight:bold; font-size:20px; text-align:center; "
                             "padding-top:15px; padding-bottom:15px;"
                         ),
+                    ),
+                    ui.tags.img(
+                        src="1.png",
+                        style="width:100%; height:400px; object-fit:cover; margin-bottom:10px; border-radius:8px;"
                     ),
                     ui.p("현장별 주요 지표 및 트렌드"),
                     ui.input_action_button("goto_field", "이동", class_="btn btn-outline-primary mt-2"),
@@ -761,6 +731,10 @@ def menu_page():
                             "padding-top:15px; padding-bottom:15px;"
                         ),
                     ),
+                    ui.tags.img(
+                        src="3.png",
+                        style="width:100%; height:400px; object-fit:cover; margin-bottom:10px; border-radius:8px;"
+                    ),
                     ui.p("불량률, 센서 이상 감지, 예측 결과"),
                     ui.input_action_button("goto_quality", "이동", class_="btn btn-outline-success mt-2"),
                 ),
@@ -780,7 +754,11 @@ def menu_page():
                             "padding-top:15px; padding-bottom:15px;"
                         ),
                     ),
-                    ui.p("EDA 및 주요 피처 분석 결과"),
+                    ui.tags.img(
+                        src="2.png",
+                        style="width:100%; height:400px; object-fit:cover; margin-bottom:10px; border-radius:8px;"
+                    ),
+                    ui.p("주요 피처 분석 결과"),
                     ui.input_action_button("goto_analysis", "이동", class_="btn btn-outline-secondary mt-2"),
                 ),
             ),

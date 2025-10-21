@@ -285,3 +285,34 @@ footer {
     gap: 10px;
     align-items: center;
 }
+
+.overview-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+    position: relative;
+    width: 450px;
+}
+
+.overview-card:hover {
+    background-color: #f8f9fa !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    transform: translateY(-2px);
+    z-index: 10;
+}
+
+/* 카드 전체를 클릭 가능하게 하는 투명 버튼 */
+.card-link {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    cursor: pointer;
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+}
+
+.card-link:hover,
+.card-link:focus,
+.card-link:active {
+    background: transparent !important;
+    box-shadow: none !important;
+}
