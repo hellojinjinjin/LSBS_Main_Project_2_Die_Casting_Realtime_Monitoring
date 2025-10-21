@@ -924,10 +924,6 @@ def analysis_page_ui():
     """스케치 기반의 '데이터 분석 / 모델 모니터링' 탭 UI 생성"""
     return ui.navset_tab(
         ui.nav_panel(
-            "데이터 분석 (EDA)", 
-            ui.p("이곳에 기존의 데이터 탐색(EDA) 관련 차트나 내용을 넣을 수 있습니다.")
-        ),
-        ui.nav_panel(
             "모델 모니터링",
             ui.layout_sidebar(
                 # === 1. 사이드바 (제어 패널) ===
