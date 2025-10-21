@@ -62,7 +62,6 @@ def calc_baseline_ucl(train_df, cols):
     cov = np.cov(X, rowvar=False)
     inv_cov = np.linalg.pinv(cov)
     UCL = p * (n - 1) * (n + 1) / (n * (n - p)) * f.ppf(0.99, p, n - p)
-    print(f"✅ Baseline UCL({cols[0][:6]}...) 계산 완료: {UCL:.3f}")
     return UCL, mean, inv_cov
 
 
@@ -161,7 +160,6 @@ def calc_baseline_xr(train_df, subgroup_size=5):
 # 🔸 baseline 미리 계산
 fin_train = pd.read_csv("./data/train_raw.csv")
 BASELINE_XR = calc_baseline_xr(fin_train)
-print("✅ X-R Baseline 계산 완료:", len(BASELINE_XR), "개 변수")
 
 
 
@@ -258,7 +256,6 @@ XR_COLS = [
     "upper_mold_temp1", "lower_mold_temp1", "physical_strength"
 ]
 BASELINE_XR = calc_baseline_xr(fin_train)
-print("✅ X-R Baseline 계산 완료:", list(BASELINE_XR.keys()))
 
 
 # 공정별 변수 리스트
@@ -1765,14 +1762,10 @@ def server(input, output, session):
         # 날짜가 바뀔 때마다 현재 페이지 상태를 터미널(콘솔)에 출력합니다.
         current_state = page_state()
         active_tab = input.field_tabs()
-        print(f"===== 날짜 변경 감지됨 ===== 현재 페이지: {current_state}")
         # --- 🐞 디버깅 코드 끝 ---
 
         # ✅ 현재 페이지가 "field"일 때만 팝업 실행
         if current_state == "field" and active_tab == "생산현황":
-            
-            print(f"===== '{current_state}' 페이지이므로 팝업을 실행합니다.")
-            
             # --- 여기부터 기존 팝업 로직 ---
             ref_date_str = input.ref_date() or "2019-01-19"
             ref_date = pd.to_datetime(ref_date_str).normalize()
@@ -1869,18 +1862,6 @@ def server(input, output, session):
         else:
              print(f"===== '{current_state}' 페이지이므로 팝업을 표시하지 않습니다.")
 
-
-
-
-
-
-
-
-
-
-
-
-
     # ======== 📈 데이터 분석 탭 ========
    # --- 생산계획 탭 서버 로직 ---
     @render.ui
@@ -1894,7 +1875,6 @@ def server(input, output, session):
     DATA_PATH = pathlib.Path("./data/train_raw.csv")
     try:
         df_raw = pd.read_csv(DATA_PATH)
-        print(f"✅ 데이터 로드 완료: {df_raw.shape}")
     except Exception as e:
         print("⚠️ 데이터 로드 실패:", e)
         df_raw = pd.DataFrame()
@@ -1954,7 +1934,6 @@ def server(input, output, session):
     DATA_PATH = pathlib.Path("./data/train_raw.csv")
     try:
         df_raw = pd.read_csv(DATA_PATH)
-        print(f"✅ 데이터 로드 완료: {df_raw.shape}")
     except Exception as e:
         print("⚠️ 데이터 로드 실패:", e)
         df_raw = pd.DataFrame()
@@ -3911,7 +3890,6 @@ def server(input, output, session):
                     new_val = current[col] - diff / 2  # baseline 쪽으로 50% 이동
                     update_slider(f"{col}_slider", value=float(new_val))
                     update_numeric(col, value=float(new_val))
-                    print(f"[반영됨] {col}: {current[col]} → {new_val} (baseline {baseline[col]})")
 
         # === ② 개선 후 자동 예측 ===
         try:
@@ -4739,9 +4717,6 @@ def server(input, output, session):
             for _, row in next_batch.iterrows():
                 data_queue.append(row.to_dict())
 
-        print(f"📥 큐 적재: 현재 {len(data_queue)}건")
-
-
     # ------------------------------------------------------
     # ② 큐 → current_data 누적
     # ------------------------------------------------------
@@ -4763,8 +4738,6 @@ def server(input, output, session):
 
         ts = latest.get("real_time", None)
         prob = latest.get("predict_prob", None)
-        print(f"📡 {ts}: prob={prob}")
-
 
     # ------------------------------------------------------
     # 📊 누적 성능 지표 계산 함수
@@ -4998,8 +4971,6 @@ def server(input, output, session):
             }])
             updated = pd.concat([new_row, logs], ignore_index=True).head(50)  # 최근 50개까지만
             risk_log.set(updated)
-
-            print(f"⚠️ 위험구간 감지 | Mold={last_row.get('mold_code')} Prob={prob:.3f}")
 
     # ------------------------------------------------------
     # 📋 실시간 예측 로그 UI 출력 (테이블 형태)
