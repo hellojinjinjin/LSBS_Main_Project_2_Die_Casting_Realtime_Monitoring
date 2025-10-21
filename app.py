@@ -29,8 +29,8 @@ plt.ioff()
 from shared import streaming_df, RealTimeStreamer, KFStreamer
 import plotly.express as px
 import plotly.graph_objects as go
-from fpdf import FPDF
 import datetime
+from shiny import ui, render, reactive
 
 # ==========================================
 # 🔹 Baseline UCL 계산 함수 (고정형 관리도용)
@@ -950,16 +950,7 @@ def plan_page_ui():
         ui.card(
             ui.card_header("달력형 계획표", ui.input_action_button("show_modal", "날짜별 금형 코드 생산 추이", class_="btn btn-sm btn-outline-primary", style="position:absolute; top:10px; right:10px;")),
             ui.output_ui("calendar_view"),
-            ui.hr(),
-            
-            # ✅✅✅ 에러 수정: ui.icon() -> ui.tags.i() 로 변경 ✅✅✅
-            ui.input_action_button(
-                "generate_report_btn", 
-                ["PDF 보고서 생성 ", ui.tags.i(class_="fa-solid fa-file-pdf")], 
-                class_="btn btn-danger"
-            ),
-            
-            ui.output_ui("report_output_placeholder")
+            ui.hr(),  
         )
     )
 # ======== 3️⃣ 본문 페이지 ========
@@ -1575,7 +1566,12 @@ def server(input, output, session):
             html.append("</tr>")
         html.append("</table>")
 
-        return ui.HTML("".join(html))
+        return ui.div(
+                ui.HTML("".join(html)),
+                ui.br(),
+                ui.output_ui("monthly_summary_button")  # ✅ 버튼 출력 추가
+            )
+                
 
     # =====================================================
     # 🧮 하단 요약 텍스트
@@ -1618,6 +1614,75 @@ def server(input, output, session):
             f"({achieve_rate:.1f}%) 🎯 남은 목표: {remaining:,.0f}ea / 남은 {remaining_days}일 → "
             f"하루 평균 {daily_need:,.0f}ea 필요"
         )
+
+   # ============================================================
+    # 📊 생산 계획 달성률 보고서 (팝업 표시)
+    # ============================================================
+
+    @output
+    @render.ui
+    def monthly_summary_button():
+        return ui.input_action_button(
+            "popup_report_btn",   # ✅ 새 이름
+            "📊 생산 계획 달성률 보고서",
+            class_="btn btn-warning"
+        )
+
+    @reactive.effect
+    @reactive.event(input.popup_report_btn)   # ✅ 여기도 동일하게 수정
+    def _():
+        ref_date_str = input.ref_date() or "2019-01-19"
+        ref_date = pd.to_datetime(ref_date_str).date()
+        year, month = ref_date.year, ref_date.month
+
+        df_month = fin_all[
+            (fin_all["real_time"].dt.year == year) &
+            (fin_all["real_time"].dt.month == month)
+        ].copy()
+
+        if df_month.empty:
+            ui.modal_show(
+                ui.modal(
+                    ui.p(f"⚠️ {year}년 {month}월 데이터가 없습니다."),
+                    title="⚠️ 알림",
+                    easy_close=True,
+                    footer=ui.modal_button("닫기")
+                )
+            )
+            return
+
+        daily_df = df_month.groupby("date").size().reset_index(name="daily_prod")
+        total_prod = daily_df["daily_prod"].sum()
+        avg_daily = total_prod / len(daily_df)
+        monthly_goal = avg_daily * calendar.monthrange(year, month)[1]
+        achieve_rate = (total_prod / monthly_goal) * 100
+
+        best_day = daily_df.loc[daily_df["daily_prod"].idxmax(), "date"]
+        worst_day = daily_df.loc[daily_df["daily_prod"].idxmin(), "date"]
+
+        html = f"""
+        <div style='font-size:15px; line-height:1.6;'>
+            <h4>📘 {year}년 {month}월 생산 계획 달성률 보고서</h4>
+            <hr>
+            <p><b>달성률:</b> {achieve_rate:.1f}%</p>
+            <p><b>총 생산량:</b> {total_prod:,}ea</p>
+            <p><b>평균 일일 생산량:</b> {avg_daily:,.0f}ea</p>
+            <p><b>최고 생산일:</b> {best_day.strftime('%Y-%m-%d')}</p>
+            <p><b>최저 생산일:</b> {worst_day.strftime('%Y-%m-%d')}</p>
+        </div>
+        """
+
+        ui.modal_show(
+            ui.modal(
+                ui.HTML(html),
+                title=f"📊 {year}년 {month}월 보고서",
+                easy_close=True,
+                footer=ui.modal_button("닫기"),
+                size="xl"
+            )
+        )
+
+
 
 
 
@@ -1699,69 +1764,86 @@ def server(input, output, session):
         print("⚠️ 데이터 로드 실패:", e)
         df_raw = pd.DataFrame()
 
-    # PDF 리포트 생성
-    def generate_report(df):
-        report_dir = os.path.join(APP_DIR, "report")
-        os.makedirs(report_dir, exist_ok=True)
-        pdf_path = os.path.join(report_dir, "Production_Achievement_Report.pdf")
-
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.add_font("Nanum", "", font_path, uni=True)
-        pdf.set_font("Nanum", size=12)
-        pdf.cell(0, 10, "📑 생산 계획 달성률 보고서", ln=True, align="C")
-        pdf.ln(10)
-
-        target = 1000
-        achieved = len(df)
-        rate = achieved / target * 100
-        pdf.multi_cell(0, 8, f"이번 기간 달성률: {rate:.1f}%")
-        pdf.multi_cell(0, 8, "주요 저하 원인:\n - 설비 온도 불안정\n - 냉각수 지연\n - 교대 시 세팅 시간 증가")
-
-        if "mold_code" in df.columns:
-            pdf.ln(5)
-            pdf.cell(0, 8, "공정별 달성률:", ln=True)
-            for m, v in (df["mold_code"].value_counts(normalize=True) * 100).items():
-                pdf.cell(0, 8, f" - Mold {m}: {v:.1f}%", ln=True)
-
-        pdf.ln(8)
-        pdf.cell(0, 8, f"설비 가동률: {np.random.uniform(85,97):.1f}%", ln=True)
-        pdf.output(pdf_path)
-        return pdf_path
+    
 
     # -------- UI 내용 --------
 
-    @output
+    plan_df = reactive.Value(pd.DataFrame())
+
+    @reactive.effect
+    @reactive.event(input.run_plan)
+    def _make_plan_df():
+        total_target = input.monthly_target()
+        year, month = int(input.year()), int(input.month())
+
+        targets = {}
+        user_sum = 0
+        for code in codes[:-1]:
+            qty = input[f"target_{code}"]()
+            targets[code] = qty
+            user_sum += qty
+        targets[last_code] = max(total_target - user_sum, 0)
+
+        if sum(targets.values()) == 0:
+            for _, row in mold_summary.iterrows():
+                code = row["mold_code"]
+                ratio = row["daily_capacity"] / mold_summary["daily_capacity"].sum()
+                targets[code] = int(total_target * ratio)
+
+        _, last_day = calendar.monthrange(year, month)
+
+        weeks = ["3종류", "2종류", "3종류", "2종류"]
+        codes_3, codes_2 = codes[:3], codes[3:5]
+
+        schedule = []
+        day_counter = 0
+        for week_num, mode in enumerate(weeks, start=1):
+            if day_counter >= last_day:
+                break
+            selected = codes_3 if mode == "3종류" else codes_2
+            daily_sum = sum(
+                mold_summary.loc[mold_summary["mold_code"] == c, "daily_capacity"].values[0]
+                for c in selected
+            )
+            ratios = {
+                c: mold_summary.loc[mold_summary["mold_code"] == c, "daily_capacity"].values[0] / daily_sum
+                for c in selected
+            }
+            for day in range(1, 8):
+                day_counter += 1
+                if day_counter > last_day:
+                    break
+                for code in codes:
+                    if code in selected:
+                        total_target_code = targets[code]
+                        daily_plan = int((total_target_code / last_day) * ratios[code] * len(selected))
+                    else:
+                        daily_plan = 0
+                    schedule.append({
+                        "date": datetime.date(year, month, day_counter),
+                        "week": week_num,
+                        "day": day,
+                        "mold_code": code,
+                        "plan_qty": daily_plan
+                    })
+
+        df = pd.DataFrame(schedule)
+        plan_df.set(df)   # ✅ reactive.Value 객체 업데이트
+
+
+
+    # 달력형 뷰 (버튼 클릭 시에만 갱신)
     @render.ui
+    @reactive.event(input.run_plan)
     def calendar_view():
         df = plan_df()
-        if df.empty:
-            return ui.p("시뮬레이션 실행 버튼을 눌러주세요.", style="text-align:center; color:grey;")
-
-        # ✅ 영어 변수명 → 한글 매핑
-        label_map = {
-            "molten_temp": "용탕 온도",
-            "upper_mold_temp1": "상금형 온도1",
-            "upper_mold_temp2": "상금형 온도2",
-            "upper_mold_temp3": "상금형 온도3",
-            "lower_mold_temp1": "하금형 온도1",
-            "lower_mold_temp2": "하금형 온도2",
-            "lower_mold_temp3": "하금형 온도3",
-            "sleeve_temperature": "슬리브 온도",
-            "cast_pressure": "주조 압력",
-            "biscuit_thickness": "비스킷 두께",
-            "physical_strength": "인장 강도",
-            "Coolant_temperature": "냉각수 온도",
-        }
-
         year, month = int(input.year()), int(input.month())
-        cal = calendar.monthcalendar(year, month)
+        calendar.setfirstweekday(calendar.SUNDAY)
         days_kr = ["일", "월", "화", "수", "목", "금", "토"]
+        cal = calendar.monthcalendar(year, month)
 
         html = '<div style="display:grid; grid-template-columns: 80px repeat(7, 1fr); gap:4px;">'
-        html += '<div></div>' + "".join(
-            [f"<div style='font-weight:bold; text-align:center;'>{d}</div>" for d in days_kr]
-        )
+        html += '<div></div>' + "".join([f"<div style='font-weight:bold; text-align:center;'>{d}</div>" for d in days_kr])
 
         for w_i, week in enumerate(cal, start=1):
             html += f"<div style='font-weight:bold;'>{w_i}주</div>"
@@ -1771,45 +1853,51 @@ def server(input, output, session):
                 else:
                     cell_date = datetime.date(year, month, d)
                     cell_df = df[df["date"] == cell_date]
-                    cell_html = ""
 
+                    cell_html = ""
                     for _, r in cell_df.iterrows():
                         if r["plan_qty"] > 0:
                             code = str(r["mold_code"])
+
+                            # 세팅값 조회
                             row = setting_df[setting_df["mold_code"] == code]
                             if row.empty:
                                 tooltip_html = "<p>세팅값 없음</p>"
                             else:
                                 settings = row.to_dict("records")[0]
-                                rows_html = "".join([
-                                    # ✅ 영어 대신 한글 출력
-                                    f"<tr><td>{label_map.get(k, k)}</td><td>{v:.2f}</td></tr>"
-                                    for k, v in settings.items() if k != "mold_code"
-                                ])
-                                tooltip_html = f"""
-                                <table class='table table-sm table-bordered' style='font-size:11px; background:white; color:black;'>
-                                    <thead><tr><th>변수</th><th>값</th></tr></thead>
-                                    <tbody>{rows_html}</tbody>
-                                </table>
-                                """
 
+                            # HTML 표 생성
+                            rows_html = "".join([
+                                f"<tr><td>{label_map.get(k, k)}</td><td>{f'{v:.2f}' if isinstance(v, (int, float)) else v}</td></tr>"
+                                for k, v in settings.items() if k != "mold_code"
+                            ])
+                            tooltip_html = f"""
+                            <table class="table table-sm table-bordered" style="font-size:11px; background:white; color:black;">
+                                <thead><tr><th>변수</th><th>값</th></tr></thead>
+                                <tbody>{rows_html}</tbody>
+                            </table>
+                            """
+
+                            # 툴팁 적용
                             cell_html += str(
                                 ui.tooltip(
                                     ui.span(
                                         f"{code}: {r['plan_qty']}",
-                                        style=f"color:{mold_colors.get(code, '#000')}; font-weight:bold;"
+                                        style=f"color:{mold_colors[code]}; font-weight:bold;"
                                     ),
-                                    ui.HTML(tooltip_html),
+                                    ui.HTML(tooltip_html),  # 표 형태 툴팁
                                     placement="right"
                                 )
                             ) + "<br>"
 
                     html += f"<div style='border:1px solid #ccc; min-height:80px; padding:4px; font-size:12px;'>{d}<br>{cell_html}</div>"
-
         html += "</div>"
-        return ui.HTML(html)
+        return ui.div(
+                ui.HTML(html),
+                
+            )
 
-
+    
 
 
     @output
@@ -1830,23 +1918,6 @@ def server(input, output, session):
     def _():
         ui.modal_show(ui.modal(ui.output_plot("mold_plot"), title="날짜별 금형 코드 생산 추이", size="xl", easy_close=True))
 
-    report_content = reactive.Value(None)
-    @reactive.effect
-    @reactive.event(input.generate_report_btn)
-    def _():
-        # This part will be handled by file generation, so we just set a trigger
-        report_content.set("generate")
-
-    @output
-    @render.ui
-    def report_output_placeholder():
-        content = report_content.get()
-        if content == "generate":
-            ui.modal_show(ui.modal(ui.p("보고서 생성을 시작합니다..."), title="알림", easy_close=True))
-            report_content.set(None) # Reset trigger
-            # In a real app, you would now generate the file.
-            return ui.div(ui.hr(), ui.p("보고서 생성이 완료되었습니다.", class_="alert alert-success"))
-        return None
     
     # ===== 실시간 스트리밍 로직 =====
     @output
@@ -1870,6 +1941,11 @@ def server(input, output, session):
         ax.set_title("Real Time Sensor Data")
         return fig
     
+    
+
+    
+   
+        
     # ===== 품질 모니터링용 관리도 출력 =====
     # @output
     # @render.plot
