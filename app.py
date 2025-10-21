@@ -63,6 +63,106 @@ def calc_baseline_ucl(train_df, cols):
     print(f"✅ Baseline UCL({cols[0][:6]}...) 계산 완료: {UCL:.3f}")
     return UCL, mean, inv_cov
 
+
+# ============================================================
+# 🔹 X-R 관리도 단계별 변수 매핑
+# ============================================================
+XR_GROUPS = {
+    "용융 단계": [
+        ("molten_temp", "용융 온도"),
+        ("molten_volume", "주입한 금속 양")
+    ],
+    "충진 단계": [
+        ("sleeve_temperature", "주입 관 온도"),
+        ("EMS_operation_time", "전자 교반(EMS) 가동 시간"),
+        ("low_section_speed", "하위 구간 주입 속도"),
+        ("high_section_speed", "상위 구간 주입 속도"),
+        ("cast_pressure", "주입 압력")
+    ],
+    "냉각 단계": [
+        ("upper_mold_temp1", "상부1 금형 온도"),
+        ("upper_mold_temp2", "상부2 금형 온도"),
+        # ("upper_mold_temp3", "상부3 금형 온도"),
+        ("lower_mold_temp1", "하부1 금형 온도"),
+        ("lower_mold_temp2", "하부2 금형 온도"),
+        ("Coolant_temperature", "냉각수 온도")
+    ],
+    "생산 속도": [
+        ("facility_operation_cycleTime", "장비 전체 사이클 시간"),
+        ("production_cycletime", "실제 생산 사이클 시간")
+    ],
+    "제품 테스트": [
+        ("biscuit_thickness", "주조물 두께"),
+        ("physical_strength", "제품 강도")
+    ]
+}
+
+
+# ============================================================
+# 🔹 X-R 관리도용 기준선 계산
+# ============================================================
+def calc_baseline_xr(train_df, subgroup_size=5):
+    """
+    fin_train.csv 기반 Xbar-R 관리도용 기준값 계산
+    - 각 변수별로 subgroup 단위로 평균(Xbar), 범위(R)을 계산
+    - UCL/LCL은 표준식으로 계산 (A2=0.577, D3=0, D4=2.114)
+    """
+    import numpy as np
+
+    XR_LIMITS = {}
+
+    # subgroup 크기와 표준계수
+    A2, D3, D4 = 0.577, 0, 2.114
+
+    for col in train_df.columns:
+        if train_df[col].dtype not in ["float64", "int64"]:
+            continue  # 숫자형 데이터만 계산
+
+        values = train_df[col].dropna().values
+
+        # ✅ subgroup으로 데이터 나누기
+        subgroups = [
+            values[i:i + subgroup_size]
+            for i in range(0, len(values), subgroup_size)
+            if len(values[i:i + subgroup_size]) == subgroup_size
+        ]
+
+        if not subgroups:
+            continue
+
+        # 평균(Xbar)과 범위(R) 계산
+        xbar = np.array([np.mean(sg) for sg in subgroups])
+        rbar = np.array([np.ptp(sg) for sg in subgroups])  # ptp = max - min
+
+        # 평균값
+        Xbarbar = np.mean(xbar)
+        Rbar = np.mean(rbar)
+
+        # 관리한계 계산
+        UCLx = Xbarbar + A2 * Rbar
+        LCLx = Xbarbar - A2 * Rbar
+        UCLr = D4 * Rbar
+        LCLr = D3 * Rbar
+
+        XR_LIMITS[col] = {
+            "Xbar_bar": Xbarbar,
+            "R_bar": Rbar,
+            "UCLx": UCLx,
+            "LCLx": LCLx,
+            "UCLr": UCLr,
+            "LCLr": LCLr,
+        }
+
+    return XR_LIMITS
+
+
+# 🔸 baseline 미리 계산
+fin_train = pd.read_csv("./data/train_raw.csv")
+BASELINE_XR = calc_baseline_xr(fin_train)
+print("✅ X-R Baseline 계산 완료:", len(BASELINE_XR), "개 변수")
+
+
+
 # ✅ 표시에서 제외할 컬럼
 EXCLUDE_COLS = ["id", "line", "name", "mold_name", "date", "time", "registration_time", "count"]
 
@@ -147,11 +247,25 @@ VAR_POSITIONS = {
 train_df = pd.read_csv("./data/fin_train.csv")
 train_df.columns = [c.strip() for c in train_df.columns]
 
+
+# ============================================================
+# 🔹 X-R Baseline 로드
+# ============================================================
+fin_train = pd.read_csv("./data/fin_train.csv")
+XR_COLS = [
+    "molten_temp", "cast_pressure", "biscuit_thickness",
+    "upper_mold_temp1", "lower_mold_temp1", "physical_strength"
+]
+BASELINE_XR = calc_baseline_xr(fin_train)
+print("✅ X-R Baseline 계산 완료:", list(BASELINE_XR.keys()))
+
+
 # 공정별 변수 리스트
 melting_cols = ["molten_temp", "molten_volume"]
 filling_cols = ["sleeve_temperature", "EMS_operation_time", "low_section_speed",
                 "high_section_speed", "cast_pressure"]
-cooling_cols = ["upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+cooling_cols = ["upper_mold_temp1", "upper_mold_temp2",
+                # "upper_mold_temp3",
                 "lower_mold_temp1", "lower_mold_temp2",
                 "Coolant_temperature"]
 speed_cols = ["facility_operation_cycleTime", "production_cycletime"]
@@ -1007,6 +1121,47 @@ def main_page(selected_tab: str):
 
         # 🧭 품질 모니터링 (예측 시뮬레이션 UI 포함)
         "quality": ui.navset_tab(
+            ui.nav_panel("실시간 관리도",
+                ui.card(
+                    ui.navset_tab(
+                        # ─────────────── 다변량 관리도 ───────────────
+                        ui.nav_panel("다변량 관리도",
+                            ui.input_select(
+                                "mv_group",
+                                "관리 구분 선택",
+                                choices=["공정 관리", "생산 관리", "제품 관리"],
+                                selected="공정 관리"
+                            ),
+                            ui.output_ui("mv_group_ui")
+                        ),
+
+                        # ─────────────── X-R 관리도 ───────────────
+                        ui.nav_panel("X-R 관리도",
+                            ui.input_select(
+                                "xr_select",
+                                "단계 선택",
+                                choices=list(XR_GROUPS.keys()),
+                                selected="용융 단계"
+                            ),
+                            ui.div(
+                                ui.output_plot("xr_chart", height="1200px"),
+                                style=(
+                                    "height:1200px;"
+                                    "overflow-y:auto;"
+                                    "overflow-x:hidden;"
+                                    "padding:10px;"
+                                    "background-color:#fff;"
+                                    "border-radius:8px;"
+                                    "box-shadow:0 1px 3px rgba(0,0,0,0.1);"
+                                )
+                            )
+                        ),
+                    )
+                ),
+            ),
+
+
+
             ui.nav_panel("원인 분석",
 
                 # ──────────────── 2행: 실시간 데이터 표 ────────────────
@@ -1032,77 +1187,6 @@ def main_page(selected_tab: str):
                     ui.output_ui("local_factor_desc"),      # 텍스트 설명
                     ui.output_ui("sensor_detail_modal")     # 클릭 시 뜨는 모달창
                 ),
-            ),
-
-
-
-            ui.nav_panel("실시간 관리도",
-                ui.card(
-                    ui.card_header(
-                        "📊 실시간 다변량 관리도 (Hotelling’s T²)"),
-
-                    # 상단 3개
-                    ui.layout_columns(
-                        ui.card(
-                            ui.output_plot("mv_chart_melting"),
-                            ui.div(
-                                ui.output_table("mv_log_melting"),
-                                style=(
-                                    "max-height:200px; overflow-y:auto; overflow-x:auto; "
-                                    "white-space:nowrap; border-top:1px solid #ccc;"
-                                )
-                            ),
-                        ),
-                        ui.card(
-                            ui.output_plot("mv_chart_filling"),
-                            ui.div(
-                                ui.output_table("mv_log_filling"),
-                                style=(
-                                    "max-height:200px; overflow-y:auto; overflow-x:auto; "
-                                    "white-space:nowrap; border-top:1px solid #ccc;"
-                                )
-                            ),
-                        ),
-                        ui.card(
-                            ui.output_plot("mv_chart_cooling"),
-                            ui.div(
-                                ui.output_table("mv_log_cooling"),
-                                style=(
-                                    "max-height:200px; overflow-y:auto; overflow-x:auto; "
-                                    "white-space:nowrap; border-top:1px solid #ccc;"
-                                )
-                            ),
-                        ),
-                        col_widths=[4,4,4]
-                    ),
-
-                    ui.br(),
-
-                    # 하단 2개
-                    ui.layout_columns(
-                        ui.card(
-                            ui.output_plot("mv_chart_speed"),
-                            ui.div(
-                                ui.output_table("mv_log_speed"),
-                                style=(
-                                    "max-height:200px; overflow-y:auto; overflow-x:auto; "
-                                    "white-space:nowrap; border-top:1px solid #ccc;"
-                                )
-                            ),
-                        ),
-                        ui.card(
-                            ui.output_plot("mv_chart_quality"),
-                            ui.div(
-                                ui.output_table("mv_log_quality"),
-                                style=(
-                                    "max-height:200px; overflow-y:auto; overflow-x:auto; "
-                                    "white-space:nowrap; border-top:1px solid #ccc;"
-                                )
-                            ),
-                        ),
-                        col_widths=[6,6]
-                    )
-                )
             ),
 
             # =========================================
@@ -1182,7 +1266,7 @@ def main_page(selected_tab: str):
                             ui.layout_columns(
                                 make_num_slider("upper_mold_temp1"),
                                 make_num_slider("upper_mold_temp2"),
-                                make_num_slider("upper_mold_temp3"),
+                                # make_num_slider("upper_mold_temp3"),
                                 make_num_slider("lower_mold_temp1"),
                                 make_num_slider("lower_mold_temp2"),
                                 # make_num_slider("lower_mold_temp3"),
@@ -1950,6 +2034,51 @@ def server(input, output, session):
         # ✅ T² 계산
         T2 = np.array([(x - mean) @ inv_cov @ (x - mean).T for x in X])
         return df.index, T2, UCL
+    
+    
+    # ============================================================
+    # ✅ X-R 관리도 계산 (고정형 그룹, xr_chart() 호환 버전)
+    # ============================================================
+    def calc_realtime_xr(df, col, baseline_xr, subgroup_size=5):
+        """
+        고정된 서브그룹 단위로 Xbar-R 관리도를 계산하고,
+        xr_chart()에서 사용 가능한 (idx, xbars, ranges, baseline) 형태로 반환
+        """
+
+        # 데이터가 부족하면 None 반환
+        if len(df) < subgroup_size:
+            return None
+
+        # 완전한 그룹 수 계산
+        num_groups = len(df) // subgroup_size
+        used_df = df.iloc[:num_groups * subgroup_size].copy()
+        groups = np.array_split(used_df[col].values, num_groups)
+
+        # 그룹별 평균과 범위 계산
+        xbars = [g.mean() for g in groups]
+        ranges = [g.max() - g.min() for g in groups]
+        idx = list(range(1, num_groups + 1))  # x축 = 그룹 번호
+
+        # 중심선 계산
+        xbar_bar = np.mean(xbars)
+        r_bar = np.mean(ranges)
+
+        # 표준 관리도 상수 (n=5 기준)
+        A2, D3, D4 = 0.577, 0, 2.115
+
+        # UCL/LCL 계산
+        UCLx = xbar_bar + A2 * r_bar
+        LCLx = xbar_bar - A2 * r_bar
+        UCLr = D4 * r_bar
+        LCLr = D3 * r_bar
+
+        # baseline dict 구성 (xr_chart에서 baseline["UCLx"] 식으로 사용)
+        baseline = {
+            "UCLx": UCLx, "LCLx": LCLx, "Xbar_bar": xbar_bar,
+            "UCLr": UCLr, "LCLr": LCLr, "R_bar": r_bar
+        }
+
+        return idx, xbars, ranges, baseline
 
 
     # ───────────────────────────────
@@ -1977,6 +2106,34 @@ def server(input, output, session):
         ax.legend()
         ax.grid(True, alpha=0.3)
         plt.tight_layout()
+        return fig
+    
+    
+    # ============================================================
+    # 🔹 X-R 관리도 시각화 함수
+    # ============================================================
+    def plot_xr_chart(idx, xbars, ranges, baseline, col):
+        import matplotlib.pyplot as plt
+        fig, axes = plt.subplots(2, 1, figsize=(6, 5), sharex=True)
+
+        # Xbar Chart
+        axes[0].plot(idx, xbars, marker="o", color="steelblue")
+        axes[0].axhline(baseline["UCLx"], color="red", linestyle="--", label="UCLx")
+        axes[0].axhline(baseline["LCLx"], color="red", linestyle="--", label="LCLx")
+        axes[0].axhline(baseline["Xbar_bar"], color="green", linestyle=":")
+        axes[0].set_title(f"{col} – X-bar 관리도")
+        axes[0].legend(); axes[0].grid(True, alpha=0.3)
+
+        # R Chart
+        axes[1].plot(idx, ranges, marker="o", color="darkorange")
+        axes[1].axhline(baseline["UCLr"], color="red", linestyle="--", label="UCLr")
+        axes[1].axhline(baseline["LCLr"], color="red", linestyle="--", label="LCLr")
+        axes[1].axhline(baseline["R_bar"], color="green", linestyle=":")
+        axes[1].set_title(f"{col} – R 관리도")
+        axes[1].legend(); axes[1].grid(True, alpha=0.3)
+
+        fig.tight_layout()
+        plt.close(fig)
         return fig
 
 
@@ -2017,10 +2174,10 @@ def server(input, output, session):
                 # 냉각 단계
                 "upper_mold_temp1": "상부1 금형 온도",
                 "upper_mold_temp2": "상부2 금형 온도",
-                "upper_mold_temp3": "상부3 금형 온도",
+                # "upper_mold_temp3": "상부3 금형 온도",
                 "lower_mold_temp1": "하부1 금형 온도",
                 "lower_mold_temp2": "하부2 금형 온도",
-                "lower_mold_temp3": "하부3 금형 온도",
+                # "lower_mold_temp3": "하부3 금형 온도",
                 "Coolant_temperature": "냉각수 온도",
 
                 # 생산 속도
@@ -2122,7 +2279,8 @@ def server(input, output, session):
             df = df.rename(columns=reverse_map)
 
             cols = [
-                "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+                "upper_mold_temp1", "upper_mold_temp2", 
+                # "upper_mold_temp3",
                 "lower_mold_temp1", "lower_mold_temp2", 
                 "Coolant_temperature"
             ]
@@ -2151,7 +2309,8 @@ def server(input, output, session):
             df = df.rename(columns=reverse_map)   # ✅ inplace=False로 안전하게
     
             cols = [
-                "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+                "upper_mold_temp1", "upper_mold_temp2", 
+                # "upper_mold_temp3",
                 "lower_mold_temp1", "lower_mold_temp2",
                 "Coolant_temperature"
             ]
@@ -2213,7 +2372,172 @@ def server(input, output, session):
         except Exception:
             return make_placeholder_chart("제품 테스트")
     
+    # ============================================================
+    # 🔹 X-R 관리도 출력 (Shiny 렌더) — 슬라이딩형 버전
+    # ============================================================
+    @output
+    @render.plot
+    def xr_chart():
+        import matplotlib.pyplot as plt
+
+        # ✅ 전체 누적 데이터 사용 (tail 제한 없음)
+        df = current_data()
+        stage = input.xr_select()
+
+        if stage not in XR_GROUPS:
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "단계를 선택하세요.", ha="center", va="center")
+            plt.close(fig)
+            return fig
+
+        cols = XR_GROUPS[stage]
+        n = len(cols)
+        n_rows = max(n, 2)
+        fig, axes = plt.subplots(n_rows, 2, figsize=(12, 8))
+        if n_rows == 1:
+            axes = np.array([axes])
+
+        MAX_POINTS = 30       # ✅ 최근 30개 그룹만 표시
+        SUBGROUP_SIZE = 5     # ✅ 그룹 크기 고정
+
+        for i, (col, label) in enumerate(cols):
+            result = calc_realtime_xr(df, col, BASELINE_XR, subgroup_size=SUBGROUP_SIZE)
+            ax1, ax2 = axes[i]
+
+            if result is None:
+                for ax, title in zip([ax1, ax2], [f"{label} – Xbar", f"{label} – R"]):
+                    ax.set_title(f"{title} (데이터 없음)", pad=15)
+                    ax.axis("off")
+                continue
+
+            idx, xbars, ranges, baseline = result
+            total_points = len(idx)
+
+            # ✅ 최근 30개만 표시 (슬라이딩 윈도우)
+            if total_points > MAX_POINTS:
+                idx = idx[-MAX_POINTS:]
+                xbars = xbars[-MAX_POINTS:]
+                ranges = ranges[-MAX_POINTS:]
+
+            # ✅ Xbar 관리도
+            ax1.plot(idx, xbars, "o-", color="steelblue")
+            ax1.axhline(baseline["UCLx"], color="red", ls="--")
+            ax1.axhline(baseline["LCLx"], color="red", ls="--")
+            ax1.axhline(baseline["Xbar_bar"], color="green", ls=":")
+            ax1.set_title(f"{label} – Xbar")
+            ax1.grid(True, alpha=0.3)
+            ax1.set_xlim(max(1, total_points - MAX_POINTS + 1) - 0.5, total_points + 0.5)
+
+            # ✅ R 관리도
+            ax2.plot(idx, ranges, "o-", color="darkorange")
+            ax2.axhline(baseline["UCLr"], color="red", ls="--")
+            ax2.axhline(baseline["LCLr"], color="red", ls="--")
+            ax2.axhline(baseline["R_bar"], color="green", ls=":")
+            ax2.set_title(f"{label} – R")
+            ax2.grid(True, alpha=0.3)
+            ax2.set_xlim(max(1, total_points - MAX_POINTS + 1) - 0.5, total_points + 0.5)
+
+        plt.tight_layout()
+        plt.close(fig)
+        return fig
+
     
+    # ============================================================
+    # 🔹 용융 단계 X-R 관리도
+    # ============================================================
+    @output
+    @render.plot
+    def xr_chart_melting():
+        try:
+            df = current_data().tail(200)
+            cols = ["molten_temp", "molten_volume"]
+            labels = ["용융 온도", "주입 금속량"]
+            return xr_chart("용융 단계", df, cols, labels, BASELINE_XR)
+        except Exception as e:
+            print("❌ XR 용융 단계 오류:", e)
+            return make_placeholder_chart("용융 단계 X-R 관리도")
+
+
+    # ============================================================
+    # 🔹 충진 단계 X-R 관리도
+    # ============================================================
+    @output
+    @render.plot
+    def xr_chart_filling():
+        try:
+            df = current_data().tail(200)
+            cols = [
+                "sleeve_temperature", "EMS_operation_time",
+                "low_section_speed", "high_section_speed", "cast_pressure"
+            ]
+            labels = ["슬리브 온도", "EMS 가동시간", "하위속도", "상위속도", "주입압력"]
+            return xr_chart("충진 단계", df, cols, labels, BASELINE_XR)
+        except Exception as e:
+            print("❌ XR 충진 단계 오류:", e)
+            return make_placeholder_chart("충진 단계 X-R 관리도")
+
+
+    # ============================================================
+    # 🔹 냉각 단계 X-R 관리도
+    # ============================================================
+    @output
+    @render.plot
+    def xr_chart_cooling():
+        try:
+            df = current_data().tail(200)
+            reverse_map = {v: k for k, v in label_map.items()}
+            df = df.rename(columns=reverse_map)
+
+            cols = [
+                "upper_mold_temp1", "upper_mold_temp2",
+                "lower_mold_temp1", "lower_mold_temp2",
+                "Coolant_temperature"
+            ]
+            cols = [c for c in cols if c in df.columns]
+            labels = ["상부1 금형", "상부2 금형", "하부1 금형", "하부2 금형", "냉각수 온도"]
+
+            if len(cols) < 2:
+                return make_placeholder_chart("냉각 단계 X-R 관리도")
+
+            return xr_chart("냉각 단계", df, cols, labels, BASELINE_XR)
+        except Exception as e:
+            print("❌ XR 냉각 단계 오류:", e)
+            return make_placeholder_chart("냉각 단계 X-R 관리도")
+
+
+    # ============================================================
+    # 🔹 생산 속도 X-R 관리도
+    # ============================================================
+    @output
+    @render.plot
+    def xr_chart_speed():
+        try:
+            df = current_data().tail(200)
+            cols = ["facility_operation_cycleTime", "production_cycletime"]
+            labels = ["설비 사이클", "생산 사이클"]
+            return xr_chart("생산 속도", df, cols, labels, BASELINE_XR)
+        except Exception as e:
+            print("❌ XR 속도 단계 오류:", e)
+            return make_placeholder_chart("생산 속도 X-R 관리도")
+
+
+    # ============================================================
+    # 🔹 제품 테스트 X-R 관리도
+    # ============================================================
+    @output
+    @render.plot
+    def xr_chart_quality():
+        try:
+            df = current_data().tail(200)
+            cols = ["biscuit_thickness", "physical_strength"]
+            labels = ["비스킷 두께", "제품 강도"]
+            return xr_chart("제품 테스트", df, cols, labels, BASELINE_XR)
+        except Exception as e:
+            print("❌ XR 품질 단계 오류:", e)
+            return make_placeholder_chart("제품 테스트 X-R 관리도")
+
+
+
     # ============================================================
     # 🔹 실시간 관리도 갱신 주기 제어
     # ============================================================
@@ -2233,9 +2557,102 @@ def server(input, output, session):
             return make_overlog(df, cols)
         except Exception:
             return pd.DataFrame({"메시지": ["데이터 수집 중입니다. 잠시만 기다려주세요."]})
-
-
-
+    
+    
+    @output
+    @render.ui
+    def mv_group_ui():
+        group = input.mv_group()
+    
+        if group == "공정 관리":
+            return ui.layout_columns(
+                ui.card(
+                    ui.output_plot("mv_chart_melting"),
+                    ui.div(
+                        ui.output_table("mv_log_melting"),
+                        style=(
+                            "max-height:200px;"
+                            "overflow-y:auto;"
+                            "overflow-x:auto;"
+                            "white-space:nowrap;"
+                            "table-layout:fixed;"
+                            "word-break:keep-all;"
+                            "border-top:1px solid #ccc;"
+                        )
+                    ),
+                ),
+                ui.card(
+                    ui.output_plot("mv_chart_filling"),
+                    ui.div(
+                        ui.output_table("mv_log_filling"),
+                        style=(
+                            "max-height:200px;"
+                            "overflow-y:auto;"
+                            "overflow-x:auto;"
+                            "white-space:nowrap;"
+                            "table-layout:fixed;"
+                            "word-break:keep-all;"
+                            "border-top:1px solid #ccc;"
+                        )
+                    ),
+                ),
+                ui.card(
+                    ui.output_plot("mv_chart_cooling"),
+                    ui.div(
+                        ui.output_table("mv_log_cooling"),
+                        style=(
+                            "max-height:200px;"
+                            "overflow-y:auto;"
+                            "overflow-x:auto;"
+                            "white-space:nowrap;"
+                            "table-layout:fixed;"
+                            "word-break:keep-all;"
+                            "border-top:1px solid #ccc;"
+                        )
+                    ),
+                ),
+                col_widths=[4, 4, 4]
+            )
+    
+        elif group == "생산 관리":
+            return ui.layout_columns(
+                ui.card(
+                    ui.output_plot("mv_chart_speed"),
+                    ui.div(
+                        ui.output_table("mv_log_speed"),
+                        style=(
+                            "max-height:200px;"
+                            "overflow-y:auto;"
+                            "overflow-x:auto;"
+                            "white-space:nowrap;"
+                            "table-layout:fixed;"
+                            "word-break:keep-all;"
+                            "border-top:1px solid #ccc;"
+                        )
+                    ),
+                ),
+                col_widths=[12]
+            )
+    
+        elif group == "제품 관리":
+            return ui.layout_columns(
+                ui.card(
+                    ui.output_plot("mv_chart_quality"),
+                    ui.div(
+                        ui.output_table("mv_log_quality"),
+                        style=(
+                            "max-height:200px;"
+                            "overflow-y:auto;"
+                            "overflow-x:auto;"
+                            "white-space:nowrap;"
+                            "table-layout:fixed;"
+                            "word-break:keep-all;"
+                            "border-top:1px solid #ccc;"
+                        )
+                    ),
+                ),
+                col_widths=[12]
+            )
 
 
 
