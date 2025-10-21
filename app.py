@@ -666,8 +666,6 @@ global_head = ui.head_content(
         // 🔹 모든 센서 초기화 핸들러 (값 '—'로 변경)
         // =====================================================
         Shiny.addCustomMessageHandler("resetSensors", function(message) {
-            console.log("♻️ 센서 표시 초기화 (값 '—')");
-
             // 모든 센서의 값(tspan.value)을 '—' 로 바꾸고 색상을 검정으로
             document.querySelectorAll("tspan.value").forEach(node => {
                 node.textContent = "—";
@@ -885,7 +883,7 @@ def floating_stream_bar():
                 "display:flex; align-items:center; gap:16px;"
                 "background-color:#fef6ee; border:1px solid #e0c8a0;"
                 "border-bottom:none; border-radius:8px 8px 0 0;"
-                "padding:8px 16px; position:absolute; top:60px; right:40px;"
+                "padding:8px 16px; position:absolute; top:65px; right:40px;"
                 "z-index:1500; font-weight:bold; color:#5c4b3b;"
             )
         },
