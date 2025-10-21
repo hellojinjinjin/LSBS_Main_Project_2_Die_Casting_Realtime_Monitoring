@@ -3969,7 +3969,7 @@ def server(input, output, session):
     # ------------------------------------------------------------
     # ⚙️ 1. 스트리밍 주기 (초)
     # ------------------------------------------------------------
-    def stream_speed() -> float:
+    def stream_speed2() -> float:
         """루프 실행 주기 (초)"""
         return 1.0
 
@@ -4129,7 +4129,7 @@ def server(input, output, session):
     # ------------------------------------------------------------
     @reactive.effect
     def _stream_loop():
-        invalidate_later(stream_speed())  # 주기적 실행
+        invalidate_later(stream_speed2())  # 주기적 실행
         if not is_analysis_streaming():
             return
         try:
@@ -4148,7 +4148,7 @@ def server(input, output, session):
     # ------------------------------------------------------------
     @reactive.effect
     def _predict_loop():
-        invalidate_later(stream_speed())
+        invalidate_later(stream_speed2())
         if not is_analysis_streaming() or model is None:
             return
         df = analysis_data()
