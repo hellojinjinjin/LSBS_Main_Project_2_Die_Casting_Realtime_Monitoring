@@ -112,7 +112,7 @@ pip install -r requirements.txt
  ┃ ┣ train.csv
  ┃ ┗ test.csv
  ┣ 📂 models
- ┃ ┗ fin_xgb_pipeline.pkl
+ ┃ ┗ fin_xgb_f20.pkl
  ┣ 📂 www
  ┃ ┣ diagram.svg / die-casting.gif / css 등 시각화 리소스
  ┣ 📜 app.py
@@ -156,6 +156,7 @@ http://127.0.0.1:8000
 - **모델 모니터링 그래프**는 스트리밍 데이터를 기반으로 주기적 갱신  
 - 실제 현장 센서 연동 시 MQTT, OPC-UA, Kafka 등으로 확장 가능  
 - 모델 버전 호환성을 위해 **scikit-learn 1.5.1 이상** 사용 권장
+- 배포 주소 : https://spicywinter.shinyapps.io/main_proj_2_monitoring/
 
 ---
 
