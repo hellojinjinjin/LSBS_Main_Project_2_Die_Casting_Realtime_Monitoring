@@ -36,7 +36,9 @@ from shiny import ui, render, reactive
 # 🔹 Baseline UCL 계산 함수 (고정형 관리도용)
 # ==========================================
 from scipy.stats import f
+from collections import deque
 
+data_queue = deque()  # 스트리밍 데이터 큐 (2초마다 1행씩 처리)
 stream_speed = reactive.Value(2.0)  # 기본 2초 주기
 
 # 🔧 basic_fix 함수 추가 (model.py와 동일하게)
@@ -2441,52 +2443,83 @@ def server(input, output, session):
         if not is_streaming():
             await session.send_custom_message("updateGif", {"src": "die-castings.png"})
 
-
-    # 주기적 업데이트
+    # ======================================================
+    # ① 스트리머에서 데이터 수집 (배치 단위)
+    # ======================================================
     @reactive.effect
-    async def _auto_update():
-        """2초마다 실시간 스트리밍 업데이트 (현장 + 품질 분리)"""
+    async def _collect_stream():
+        """스트리머에서 여러 행을 받아 큐에 쌓기만 하는 역할"""
         if not is_streaming():
             return
 
         reactive.invalidate_later(stream_speed())
 
-        # 현재 페이지 상태 확인
         page = page_state()
-
-        # 📊 현장 대시보드
         if page == "field":
             s = streamer()
-        # 🧭 품질 모니터링 (칼만 필터 CSV 사용)
         elif page == "quality":
             s = kf_streamer()
         else:
             return
 
+        # 여러 행 들어올 수 있음 → 전부 큐에 적재
         next_batch = s.get_next_batch(1)
-        if next_batch is not None:
-            current_data.set(s.get_current_data())
-            latest = next_batch.iloc[-1].to_dict()
+        if next_batch is not None and not next_batch.empty:
+            for _, row in next_batch.iterrows():
+                data_queue.append(row.to_dict())
 
-            # 🚨 불량 발생 시 알림 추가
-            if "passorfail" in latest and latest["passorfail"] == 1:
-                mold = latest.get("mold_code", "-")
-                time_str = latest.get("real_time", "")
-                push_alert(f"🚨 불량 발생 — 금형 {mold}, 시각 {time_str}", "danger")
+    # ======================================================
+    # ② 큐에서 한 행씩 소비 (2초마다 한 건씩 처리)
+    # ======================================================
+    @reactive.effect
+    async def _consume_stream():
+        """2초마다 큐에서 한 행만 꺼내 공정상태 + 알림 처리"""
+        if not is_streaming():
+            return
 
-            clean_values = {}
-            for k, v in latest.items():
-                # ❌ 불필요한 키 제거
-                if any(sub in k.lower() for sub in ["unnamed", "index"]):
-                    continue
-                if not isinstance(v, (int, float)) or pd.isna(v):
-                    continue
-                # ✅ HTML id로 안전하게 바꾸기
-                safe_key = str(k).replace(":", "_").replace(" ", "_")
-                clean_values[safe_key] = float(v)
-            await session.send_custom_message("updateSensors", clean_values)
+        reactive.invalidate_later(stream_speed())
+
+        if not data_queue:
+            return
+
+        latest = data_queue.popleft()
+
+        # ✅ 기존 데이터 가져와서 누적
+        df_old = current_data()
+        if df_old is None or df_old.empty:
+            df_new = pd.DataFrame([latest])
         else:
-            is_streaming.set(False)
+            df_new = pd.concat([df_old, pd.DataFrame([latest])], ignore_index=True)
+
+        current_data.set(df_new)
+
+        # === 🚨 불량 감지 ===
+        if latest.get("passorfail", 0) == 1:
+            mold = latest.get("mold_code", "-")
+            time_str = str(latest.get("real_time", ""))
+            push_alert(f"🚨 불량 발생 — 금형 {mold}, 시각 {time_str}", defer=True)
+
+        # === JS 업데이트 ===
+        clean_values = {}
+        for k, v in latest.items():
+            if any(sub in str(k).lower() for sub in ["unnamed", "index"]):
+                continue
+            if isinstance(v, (int, float)) and not pd.isna(v):
+                clean_values[str(k).replace(":", "_").replace(" ", "_")] = float(v)
+
+        mold_code = str(latest.get("mold_code", ""))
+        await session.send_custom_message("updateSensors", {
+            "values": clean_values,
+            "mold_code": mold_code
+        })
+
+        # 🔚 루프 끝: 버퍼 → alerts 반영 (한 번만)
+        buf = list(alert_buffer())
+        if buf:
+            lst = list(alerts())
+            lst.extend(buf)
+            alerts.set(lst[-20:])
+            alert_buffer.set([])
 
     @output
     @render.ui
@@ -2810,10 +2843,10 @@ def server(input, output, session):
     # ============================================
     # 🔔 실시간 불량 알림 시스템
     # ============================================
-    alerts = reactive.Value([])
+    alerts = reactive.Value([])          # 기존 알림 표시용
+    alert_buffer = reactive.Value([])    # 🚀 버퍼를 reactive로 (전역 리스트 사용 X)
 
-    def push_alert(message, level="danger"):
-        """새로운 알림 추가 (최근 20개 유지)"""
+    def push_alert(message, level="danger", defer=True):
         color_map = {
             "info": "#2196F3",
             "success": "#4CAF50",
@@ -2826,18 +2859,23 @@ def server(input, output, session):
             "warning": "fa-triangle-exclamation",
             "danger": "fa-circle-exclamation",
         }
-
         now = datetime.datetime.now().strftime("%H:%M:%S")
-        alerts_list = alerts()
-        alerts_list.append({
+        item = {
             "msg": message,
             "level": level,
             "color": color_map.get(level, "#2196F3"),
             "icon": icon_map.get(level, "fa-circle-info"),
             "time": now,
-        })
-        alerts.set(alerts_list[-20:])  # ✅ 최근 20개까지만 유지
+        }
 
+        if defer:
+            buf = list(alert_buffer())    # ✅ 가져오고
+            buf.append(item)              #   추가한 뒤
+            alert_buffer.set(buf)         #   다시 set (reactive 업데이트)
+        else:
+            lst = list(alerts())
+            lst.append(item)
+            alerts.set(lst[-20:])
 
     @output
     @render.ui
