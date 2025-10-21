@@ -2521,6 +2521,8 @@ def server(input, output, session):
         current_data.set(pd.DataFrame())
         is_streaming.set(False)
         stream_speed.set(2.0)  # ✅ 배속 기본값으로 초기화
+        alerts.set([])
+        alert_buffer.set([])
 
         # ✅ 1️⃣ 먼저 표시 리셋
         await session.send_custom_message("resetSensors", True)
