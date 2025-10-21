@@ -39,6 +39,7 @@ from scipy.stats import f
 from collections import deque
 
 data_queue = deque()  # 스트리밍 데이터 큐 (2초마다 1행씩 처리)
+data_queue_kf = deque()  # kf스트리밍 데이터 큐 (2초마다 1행씩 처리)
 stream_speed = reactive.Value(2.0)  # 기본 2초 주기
 
 # 🔧 basic_fix 함수 추가 (model.py와 동일하게)
@@ -175,7 +176,8 @@ display_cols = [
 # 스트리밍 초기 설정
 streamer = reactive.Value(RealTimeStreamer(streaming_df))
 kf_streamer = reactive.Value(KFStreamer(kf_streaming_df))
-current_data = reactive.Value(pd.DataFrame())
+current_data_field = reactive.Value(pd.DataFrame())   # 현장 데이터
+current_data_kf = reactive.Value(pd.DataFrame())      # 품질 데이터
 is_streaming = reactive.Value(False)
 
 # ===== 한글 변수명 매핑 =====
@@ -2117,7 +2119,7 @@ def server(input, output, session):
     @output
     @render.plot
     def stream_plot():
-        df = current_data()
+        df = current_data_kf()
         fig, ax = plt.subplots(figsize=(10, 4))
         if df.empty:
             ax.text(0.5, 0.5, "▶ Start Streaming", ha="center", va="center", fontsize=14)
@@ -2471,7 +2473,7 @@ def server(input, output, session):
     @render.plot
     def mv_chart_melting():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["molten_temp", "molten_volume"]
             idx, T2, UCL = calc_hotelling_t2(df, cols)
             return plot_t2_chart(idx, T2, UCL, "용융 단계")
@@ -2483,7 +2485,7 @@ def server(input, output, session):
     @render.table
     def mv_log_melting():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["molten_temp", "molten_volume"]
             return make_overlog(df, cols)
         except Exception:
@@ -2496,7 +2498,7 @@ def server(input, output, session):
     @render.plot
     def mv_chart_filling():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["sleeve_temperature", "EMS_operation_time",
                     "low_section_speed", "high_section_speed", "cast_pressure"]
             idx, T2, UCL = calc_hotelling_t2(df, cols)
@@ -2509,7 +2511,7 @@ def server(input, output, session):
     @render.table
     def mv_log_filling():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["sleeve_temperature", "EMS_operation_time",
                     "low_section_speed", "high_section_speed", "cast_pressure"]
             return make_overlog(df, cols)
@@ -2523,7 +2525,7 @@ def server(input, output, session):
     @render.plot
     def mv_chart_cooling():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
 
             # ✅ (추가) 한글 컬럼명을 영어로 자동 되돌리기
             reverse_map = {v: k for k, v in label_map.items()}
@@ -2555,7 +2557,7 @@ def server(input, output, session):
     @render.table
     def mv_log_cooling():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             reverse_map = {v: k for k, v in label_map.items()}
             df = df.rename(columns=reverse_map)   # ✅ inplace=False로 안전하게
     
@@ -2591,7 +2593,7 @@ def server(input, output, session):
     @render.plot
     def mv_chart_speed():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["facility_operation_cycleTime", "production_cycletime"]
             idx, T2, UCL = calc_hotelling_t2(df, cols)
             return plot_t2_chart(idx, T2, UCL, "생산 속도")
@@ -2603,7 +2605,7 @@ def server(input, output, session):
     @render.table
     def mv_log_speed():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["facility_operation_cycleTime", "production_cycletime"]
             return make_overlog(df, cols)
         except Exception:
@@ -2616,7 +2618,7 @@ def server(input, output, session):
     @render.plot
     def mv_chart_quality():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["biscuit_thickness", "physical_strength"]
             idx, T2, UCL = calc_hotelling_t2(df, cols)
             return plot_t2_chart(idx, T2, UCL, "제품 테스트")
@@ -2631,7 +2633,8 @@ def server(input, output, session):
     def xr_chart():
         import matplotlib.pyplot as plt
 
-        df = current_data()
+        # ✅ 전체 누적 데이터 사용 (tail 제한 없음)
+        df = current_data_kf()
         stage = input.xr_select()
         stage = stage.split("] ")[-1]
 
@@ -2703,7 +2706,7 @@ def server(input, output, session):
     @render.plot
     def xr_chart_melting():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = ["molten_temp", "molten_volume"]
             labels = ["용융 온도", "주입 금속량"]
             return xr_chart("용융 단계", df, cols, labels, BASELINE_XR)
@@ -2719,7 +2722,7 @@ def server(input, output, session):
     @render.plot
     def xr_chart_filling():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = [
                 "sleeve_temperature", "EMS_operation_time",
                 "low_section_speed", "high_section_speed", "cast_pressure"
@@ -2738,7 +2741,7 @@ def server(input, output, session):
     @render.plot
     def xr_chart_cooling():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             reverse_map = {v: k for k, v in label_map.items()}
             df = df.rename(columns=reverse_map)
 
@@ -2766,7 +2769,7 @@ def server(input, output, session):
     @render.plot
     def xr_chart_speed():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = ["facility_operation_cycleTime", "production_cycletime"]
             labels = ["설비 사이클", "생산 사이클"]
             return xr_chart("생산 속도", df, cols, labels, BASELINE_XR)
@@ -2782,7 +2785,7 @@ def server(input, output, session):
     @render.plot
     def xr_chart_quality():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = ["biscuit_thickness", "physical_strength"]
             labels = ["비스킷 두께", "제품 강도"]
             return xr_chart("제품 테스트", df, cols, labels, BASELINE_XR)
@@ -2798,7 +2801,7 @@ def server(input, output, session):
     @render.table
     def xr_log_melting():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = ["molten_temp", "molten_volume"]
             logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
             merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
@@ -2815,7 +2818,7 @@ def server(input, output, session):
     @render.table
     def xr_log_filling():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = ["sleeve_temperature", "EMS_operation_time",
                     "low_section_speed", "high_section_speed", "cast_pressure"]
             logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
@@ -2833,7 +2836,7 @@ def server(input, output, session):
     @render.table
     def xr_log_cooling():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             reverse_map = {v: k for k, v in label_map.items()}
             df = df.rename(columns=reverse_map)
             cols = ["upper_mold_temp1", "upper_mold_temp2",
@@ -2853,7 +2856,7 @@ def server(input, output, session):
     @render.table
     def xr_log_speed():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = ["facility_operation_cycleTime", "production_cycletime"]
             logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
             merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
@@ -2870,7 +2873,7 @@ def server(input, output, session):
     @render.table
     def xr_log_quality():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = ["biscuit_thickness", "physical_strength"]
             logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
             merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
@@ -2884,7 +2887,7 @@ def server(input, output, session):
     def xr_log_table():
         stage = input.xr_select()
         stage = stage.split("] ")[-1]
-        df = current_data().tail(200)
+        df = current_data_kf().tail(200)
 
         stage_cols = {
             "용융 단계": ["molten_temp", "molten_volume"],
@@ -2952,7 +2955,7 @@ def server(input, output, session):
     @render.table
     def mv_log_quality():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["biscuit_thickness", "physical_strength"]
             return make_overlog(df, cols)
         except Exception:
@@ -3130,7 +3133,8 @@ def server(input, output, session):
     async def _reset_stream():
         streamer().reset_stream()
         kf_streamer().reset_stream()
-        current_data.set(pd.DataFrame())
+        current_data_field.set(pd.DataFrame())
+        current_data_kf.set(pd.DataFrame())
         is_streaming.set(False)
         stream_speed.set(2.0)  # ✅ 배속 기본값으로 초기화
         alerts.set([])
@@ -3195,18 +3199,23 @@ def server(input, output, session):
         reactive.invalidate_later(stream_speed())
 
         page = page_state()
-        if page == "field":
-            s = streamer()
-        elif page == "quality" or page == "analysis":
-            s = kf_streamer()
-        else:
-            return
-
+    # if page == "field":
+        s = streamer()
         # 여러 행 들어올 수 있음 → 전부 큐에 적재
         next_batch = s.get_next_batch(1)
         if next_batch is not None and not next_batch.empty:
             for _, row in next_batch.iterrows():
                 data_queue.append(row.to_dict())
+    # elif page == "quality" or page == "analysis":
+        s = kf_streamer()
+        # 여러 행 들어올 수 있음 → 전부 큐에 적재
+        next_batch = s.get_next_batch(1)
+        if next_batch is not None and not next_batch.empty:
+            for _, row in next_batch.iterrows():
+                data_queue_kf.append(row.to_dict())
+    # else:
+    #     return
+
 
     # ======================================================
     # ② 큐에서 한 행씩 소비 (2초마다 한 건씩 처리)
@@ -3219,19 +3228,21 @@ def server(input, output, session):
 
         reactive.invalidate_later(stream_speed())
 
-        if not data_queue:
+        page = page_state()
+    # if page == "field":
+        if not data_queue and not data_queue_kf:
             return
 
         latest = data_queue.popleft()
 
         # ✅ 기존 데이터 가져와서 누적
-        df_old = current_data()
+        df_old = current_data_field()
         if df_old is None or df_old.empty:
             df_new = pd.DataFrame([latest])
         else:
             df_new = pd.concat([df_old, pd.DataFrame([latest])], ignore_index=True)
 
-        current_data.set(df_new)
+        current_data_field.set(df_new)
 
         # === 🚨 불량 감지 ===
         if latest.get("passorfail", 0) == 1:
@@ -3246,7 +3257,7 @@ def server(input, output, session):
         ]
         if numeric_keys:
             try:
-                df_check = current_data()
+                df_check = current_data_field()
                 if df_check is not None and len(df_check) > 10:
                     df_num = df_check[numeric_keys].select_dtypes(include="number")
                     means = df_num.mean()
@@ -3305,6 +3316,19 @@ def server(input, output, session):
             lst.extend(buf)
             alerts.set(lst[-100:])
             alert_buffer.set([])
+    # elif page == "quality" or page == "analysis":
+        # if not data_queue_kf:
+        #     return
+
+        latest = data_queue_kf.popleft()
+        df_old = current_data_kf()
+        df_new = pd.concat([df_old, pd.DataFrame([latest])], ignore_index=True)
+        current_data_kf.set(df_new)
+
+        ts = latest.get("real_time", None)
+        prob = latest.get("predict_prob", None)
+    # else:
+    #     return
 
     @output
     @render.ui
@@ -3437,7 +3461,7 @@ def server(input, output, session):
     @output
     @render.ui
     def process_status_card():
-        df_live = current_data()
+        df_live = current_data_field()
 
         if df_live is None or df_live.empty:
             return ui.div(
@@ -3533,7 +3557,7 @@ def server(input, output, session):
     @output
     @render.ui
     def realtime_predict_card():
-        df_live = current_data()
+        df_live = current_data_field()
 
         if df_live is None or df_live.empty:
             return ui.div(
@@ -3590,7 +3614,7 @@ def server(input, output, session):
     @output
     @render.ui
     def stream_time_display():
-        df = current_data()
+        df = current_data_field()
         if df is None or df.empty:
             time_str = "-------- --:--:--"
         else:
@@ -3731,7 +3755,7 @@ def server(input, output, session):
     @output
     @render.data_frame
     def recent_data_table():
-        df = current_data()
+        df = current_data_field()
         if df is None or df.empty:
             return pd.DataFrame({"알림": ["현재 수신된 데이터가 없습니다."]})
 
@@ -4246,7 +4270,7 @@ def server(input, output, session):
     @output
     @render.plot
     def local_factor_plot():
-        df = current_data()
+        df = current_data_kf()
         if df is None or df.empty:
             fig, ax = plt.subplots()
             ax.text(0.5, 0.5, "실시간 데이터 수신 대기 중...", ha="center", va="center", fontsize=13)
@@ -4283,7 +4307,7 @@ def server(input, output, session):
     @output
     @render.ui
     def local_factor_desc():
-        df = current_data()
+        df = current_data_kf()
         if df is None or df.empty:
             return ui.p("⚪ 실시간 데이터 수신 중이 아닙니다.", style="color:gray;")
 
@@ -4368,7 +4392,7 @@ def server(input, output, session):
         sensor = labels[idx]
         selected_sensor.set(sensor)
 
-        df = current_data()
+        df = current_data_kf()
         if df is None or df.empty or sensor not in df.columns:
             return
 
@@ -4388,7 +4412,7 @@ def server(input, output, session):
     @render.plot
     def sensor_detail_plot():
         sensor = selected_sensor.get()
-        df = current_data()
+        df = current_data_kf()
         if not sensor or df is None or df.empty or sensor not in df.columns:
             fig, ax = plt.subplots()
             ax.axis("off")
@@ -4491,7 +4515,7 @@ def server(input, output, session):
     @output
     @render.plot
     def local_factor_plot():
-        df = current_data()
+        df = current_data_kf()
         if df is None or df.empty:
             fig, ax = plt.subplots()
             ax.text(0.5, 0.5, "실시간 데이터 수신 대기 중...", ha="center", va="center", fontsize=13)
@@ -4559,7 +4583,7 @@ def server(input, output, session):
         if idx is None:
             return
 
-        df = current_data()
+        df = current_data_kf()
         if df is None or df.empty:
             return
 
@@ -4648,7 +4672,7 @@ def server(input, output, session):
     # ------------------------------------------------------
     @render.ui
     def sidebar_realtime_panel():
-        df = current_data()
+        df = current_data_kf()
         n = len(df)
         status = "🟢 수신 중" if is_streaming() else "🔴 정지"
         last_ts, avg_prob = "-", "-"
@@ -4698,47 +4722,6 @@ def server(input, output, session):
         else:
             print("⏹ 스트리밍 중지됨")
 
-
-    # ------------------------------------------------------
-    # ① KFStreamer → 큐 적재
-    # ------------------------------------------------------
-    @reactive.effect
-    async def _collect_stream():
-        """KFStreamer에서 데이터 읽어 큐에 적재"""
-        if not is_streaming():
-            return
-
-        reactive.invalidate_later(stream_speed())
-
-        s = kf_streamer()
-        next_batch = s.get_next_batch(1)
-
-        if next_batch is not None and not next_batch.empty:
-            for _, row in next_batch.iterrows():
-                data_queue.append(row.to_dict())
-
-    # ------------------------------------------------------
-    # ② 큐 → current_data 누적
-    # ------------------------------------------------------
-    @reactive.effect
-    async def _consume_stream():
-        """큐에서 한 행씩 꺼내 누적"""
-        if not is_streaming():
-            return
-
-        reactive.invalidate_later(stream_speed())
-
-        if not data_queue:
-            return
-
-        latest = data_queue.popleft()
-        df_old = current_data()
-        df_new = pd.concat([df_old, pd.DataFrame([latest])], ignore_index=True)
-        current_data.set(df_new)
-
-        ts = latest.get("real_time", None)
-        prob = latest.get("predict_prob", None)
-
     # ------------------------------------------------------
     # 📊 누적 성능 지표 계산 함수
     # ------------------------------------------------------
@@ -4774,7 +4757,7 @@ def server(input, output, session):
     # ------------------------------------------------------
     @render.ui
     def metric_cards():
-        df = current_data()
+        df = current_data_kf()
         if df.empty or "predict" not in df or "passorfail" not in df:
             return ui.h6("⚠️ 데이터가 부족하여 성능 지표를 계산할 수 없습니다.", style="color:#999; font-size:13px;")
 
@@ -4854,9 +4837,9 @@ def server(input, output, session):
     # 📈 실시간 예측 확률 + Threshold + Mismatch 표시
     # ------------------------------------------------------
     @render.plot
-    @reactive.event(current_data)
+    @reactive.event(current_data_kf)
     def main_analysis_plot():
-        df = current_data()
+        df = current_data_kf()
         fig, ax = plt.subplots(figsize=(10, 4))
 
         if df.empty:
@@ -4905,9 +4888,9 @@ def server(input, output, session):
     # 📈 모델 응답 지연 (Latency)
     # ------------------------------------------------------
     @render.plot
-    @reactive.event(current_data)
+    @reactive.event(current_data_kf)
     def latency_plot():
-        df = current_data()
+        df = current_data_kf()
         fig, ax = plt.subplots(figsize=(10, 4))
 
         if df.empty or "predict_time" not in df.columns:
@@ -4948,9 +4931,9 @@ def server(input, output, session):
     # ⚠️ 위험 구간 감시 (stream 소비 시점)
     # ------------------------------------------------------
     @reactive.effect
-    @reactive.event(current_data)
+    @reactive.event(current_data_kf)
     def _risk_zone_monitor():
-        df = current_data()
+        df = current_data_kf()
         if df.empty:
             return
 
