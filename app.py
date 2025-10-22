@@ -10,7 +10,7 @@ import plotly.express as px
 from shinywidgets import render_plotly, output_widget
 import numpy as np
 import matplotlib
-from sklearn.metrics import pairwise_distances
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 import os
 from matplotlib import font_manager
 import plotly.io as pio
@@ -27,10 +27,9 @@ import matplotlib.pyplot as plt
 plt.ioff()
 
 # ======== 실시간 스트리밍 대시보드 (현장 메뉴) ========
-from shared import streaming_df, RealTimeStreamer, KFStreamer
+from shared import streaming_df, kf_streaming_df, RealTimeStreamer, KFStreamer
 import plotly.express as px
 import plotly.graph_objects as go
-import datetime
 from shiny import ui, render, reactive
 
 # ==========================================
@@ -40,6 +39,7 @@ from scipy.stats import f
 from collections import deque
 
 data_queue = deque()  # 스트리밍 데이터 큐 (2초마다 1행씩 처리)
+data_queue_kf = deque()  # kf스트리밍 데이터 큐 (2초마다 1행씩 처리)
 stream_speed = reactive.Value(2.0)  # 기본 2초 주기
 
 # 🔧 basic_fix 함수 추가 (model.py와 동일하게)
@@ -63,7 +63,6 @@ def calc_baseline_ucl(train_df, cols):
     cov = np.cov(X, rowvar=False)
     inv_cov = np.linalg.pinv(cov)
     UCL = p * (n - 1) * (n + 1) / (n * (n - p)) * f.ppf(0.99, p, n - p)
-    print(f"✅ Baseline UCL({cols[0][:6]}...) 계산 완료: {UCL:.3f}")
     return UCL, mean, inv_cov
 
 
@@ -162,7 +161,6 @@ def calc_baseline_xr(train_df, subgroup_size=5):
 # 🔸 baseline 미리 계산
 fin_train = pd.read_csv("./data/train_raw.csv")
 BASELINE_XR = calc_baseline_xr(fin_train)
-print("✅ X-R Baseline 계산 완료:", len(BASELINE_XR), "개 변수")
 
 
 
@@ -177,10 +175,10 @@ display_cols = [
 
 # 스트리밍 초기 설정
 streamer = reactive.Value(RealTimeStreamer(streaming_df))
-current_data = reactive.Value(pd.DataFrame())
+kf_streamer = reactive.Value(KFStreamer(kf_streaming_df))
+current_data_field = reactive.Value(pd.DataFrame())   # 현장 데이터
+current_data_kf = reactive.Value(pd.DataFrame())      # 품질 데이터
 is_streaming = reactive.Value(False)
-KF_PATH = pathlib.Path("./data/fin_test_kf_fixed.csv")
-kf_streamer = reactive.Value(KFStreamer(KF_PATH))
 
 # ===== 한글 변수명 매핑 =====
 VAR_LABELS = {
@@ -260,7 +258,6 @@ XR_COLS = [
     "upper_mold_temp1", "lower_mold_temp1", "physical_strength"
 ]
 BASELINE_XR = calc_baseline_xr(fin_train)
-print("✅ X-R Baseline 계산 완료:", list(BASELINE_XR.keys()))
 
 
 # 공정별 변수 리스트
@@ -327,7 +324,7 @@ df_raw = df_raw[
 ]
 
 # 예측용 데이터도 동일 처리
-df_predict = pd.read_csv("./data/train.csv")
+df_predict = pd.read_csv("./data/train_pred.csv")
 df_predict["pressure_speed_ratio"] = df_predict["pressure_speed_ratio"].replace([np.inf, -np.inf], np.nan)
 
 
@@ -395,6 +392,7 @@ label_map = {
     "emergency_stop": "비상 정지 여부 (ON / OFF)",
     "registration_time": "데이터 등록 시간",
     "tryshot_signal": "측정 딜레이 여부",
+    "real_time" : "실제 등록 시간",
 
     # 용융 단계
     "molten_temp": "용융 온도",
@@ -1012,64 +1010,57 @@ def plan_page_ui():
     )
 
 def analysis_page_ui():
-    """스케치 기반의 '데이터 분석 / 모델 모니터링' 탭 UI 생성"""
+    """데이터 분석 / 모델 모니터링 탭"""
     return ui.navset_tab(
         ui.nav_panel(
             "모델 모니터링",
             ui.layout_sidebar(
-                # === 1. 사이드바 (제어 패널) ===
                 ui.sidebar(
                     {"title": "모델 제어"},
-                    ui.input_select(
-                         "analysis_mold_select", "Mold Code 선택", 
-                           choices={
-                            "all": "전체", 
-                            "8412": "Mold Code 8412", # ✅ 키: 값 형태로 수정
-                            "8413": "Mold Code 8413", # ✅ 키: 값 형태로 수정
-                            "8576": "Mold Code 8576", # ✅ 키: 값 형태로 수정
-                            "8722": "Mold Code 8722", # ✅ 키: 값 형태로 수정
-                            "8917": "Mold Code 8917"  # ✅ 키: 값 형태로 수정
-                        }, 
-                         selected="all"
-                    ),
-                    ui.input_slider(
-                        "analysis_threshold", "Threshold 조정",
-                        min=0, max=1, value=0.5, step=0.01
-                    ),
+
+                    # Threshold 슬라이더
+                    ui.input_slider("analysis_threshold", "Threshold 조정",
+                                    min=0, max=1, value=0.5, step=0.01),
+
+                    # ✅ 위험 구간 슬라이더를 고정 UI로 이동
+                    ui.h6("⚠️ 위험구간 설정"),
+                    ui.input_slider("risk_low", "하한 위험", min=0.0, max=1.0, value=0.10, step=0.01),
+                    ui.input_slider("risk_high", "상한 위험", min=0.0, max=1.0, value=0.90, step=0.01),
+
                     ui.hr(),
-                    ui.h5("스트리밍 제어"),
-                    ui.output_ui("stream_control_ui"),
+                    ui.h5("실시간 현황 관리"),
+                    ui.output_ui("sidebar_realtime_panel"),  # 여기는 슬라이더 제외
                     ui.br(),
                     ui.output_ui("comm_status"),
                 ),
 
-                # === 2. 메인 컨텐츠 ===
+                # === 메인 패널 ===
                 ui.card(
                     ui.card_header("실시간 예측 확률"),
-                    # 스케치의 '들어오는 데이터' 그래프
-                    ui.output_plot("main_analysis_plot") 
+                    ui.output_plot("main_analysis_plot")
                 ),
+
                 ui.layout_columns(
                     ui.card(
                         ui.card_header("모델 응답 지연 (Latency)"),
-                        # 스케치의 'Latency' 그래프
-                        ui.output_plot("latency_plot") 
+                        ui.output_plot("latency_plot")
                     ),
                     ui.card(
-                        ui.card_header("누적 성능 지표"),
-                        # 스케치의 'Accuracy' 등 4개 카드
-                        ui.output_ui("metric_cards") 
+                        ui.card_header("누적 성능 지표 (전체 모델 기준)"),
+                        ui.output_ui("metric_cards")
                     ),
                     col_widths=[6, 6]
                 ),
+
                 ui.card(
                     ui.card_header("실시간 예측 로그"),
-                    # 스케치의 '로그 뷰어'
-                    ui.output_ui("log_viewer") 
+                    ui.output_ui("log_viewer")
                 )
             )
         )
     )
+
+
 # ======== 3️⃣ 본문 페이지 ========
 def main_page(selected_tab: str):
     # --- 메뉴별 제목 및 본문 내용 ---
@@ -1118,9 +1109,9 @@ def main_page(selected_tab: str):
                         ui.nav_panel("다변량 관리도",
                             ui.input_select(
                                 "mv_group",
-                                "관리 구분 선택",
-                                choices=["공정 관리", "생산 관리", "제품 관리"],
-                                selected="공정 관리"
+                                "관리 팀 선택",  # ← 라벨 변경
+                                choices=["공정 관리 팀", "생산 관리 팀", "제품 관리 팀"],  # ← 항목 이름 변경
+                                selected="공정 관리 팀"
                             ),
                             ui.output_ui("mv_group_ui")
                         ),
@@ -1130,19 +1121,41 @@ def main_page(selected_tab: str):
                             ui.input_select(
                                 "xr_select",
                                 "단계 선택",
-                                choices=list(XR_GROUPS.keys()),
-                                selected="용융 단계"
+                                choices=[
+                                    "[공정 관리] 용융 단계",
+                                    "[공정 관리] 충진 단계",
+                                    "[공정 관리] 냉각 단계",
+                                    "[생산 관리] 생산 속도",
+                                    "[제품 관리] 제품 테스트"
+                                ],
+                                selected="[공정 관리] 용융 단계"
                             ),
                             ui.div(
-                                ui.output_plot("xr_chart", height="1200px"),
+                                ui.output_plot("xr_chart", height="1000px"),
                                 style=(
-                                    "height:1200px;"
-                                    "overflow-y:auto;"
+                                    "height:900px;"              # ✅ 컨테이너 높이 고정
+                                    "overflow-y:auto;"           # ✅ 내부 스크롤 활성화
                                     "overflow-x:hidden;"
                                     "padding:10px;"
                                     "background-color:#fff;"
                                     "border-radius:8px;"
                                     "box-shadow:0 1px 3px rgba(0,0,0,0.1);"
+                                )
+                            ),
+                            ui.br(),
+                            ui.card(
+                                ui.card_header("📋 UCL/LCL 초과 그룹 로그"),
+                                ui.output_table("xr_log_table"),
+                                style=(
+                                    "max-height:300px;"
+                                    "overflow-y:auto;"
+                                    "overflow-x:auto;"
+                                    "white-space:nowrap;"
+                                    "table-layout:fixed;"
+                                    "word-break:keep-all;"
+                                    "border-top:1px solid #ccc;"
+                                    "th { text-align:center !important; }"
+                                    "text-align:center;"
                                 )
                             )
                         ),
@@ -1164,13 +1177,13 @@ def main_page(selected_tab: str):
 
                 # ──────────────── 2행: 실시간 데이터 표 ────────────────
                 ui.card(
-                    ui.card_header("📊 실시간 데이터"),
+                    ui.card_header("📊 실시간 데이터", style="text-align:center;"),
                     ui.div(
                         ui.output_data_frame("recent_data_table"),
                         # 🔹 스크롤이 생기도록 wrapping div에 명시적 width/overflow 지정
                         style=(
                             "width:100%; "
-                            "overflow-x:auto; overflow-y:auto; "  # 가로/세로 스크롤 모두 허용
+                            "overflow:visible; "  # 가로/세로 스크롤 모두 허용
                             "max-height:500px; "  # 너무 길면 세로 스크롤
                             "display:block;"
                         )
@@ -1214,8 +1227,8 @@ def main_page(selected_tab: str):
                             ui.card_header("공정 상태 관련"),
                             ui.layout_columns(
                                 ui.input_numeric("count", "일조 누적 제품 개수", value=int(df_predict["count"].mean())),
-                                # ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
-                                # ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
+                                ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
+                                ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
                                 ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=int(df_predict["speed_ratio"].mean())),
                                 ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=int(df_predict["pressure_speed_ratio"].mean())),
                                 make_select("working", "장비 가동 여부"),
@@ -1257,10 +1270,10 @@ def main_page(selected_tab: str):
                             ui.layout_columns(
                                 make_num_slider("upper_mold_temp1"),
                                 make_num_slider("upper_mold_temp2"),
-                                # make_num_slider("upper_mold_temp3"),
+                                make_num_slider("upper_mold_temp3"),
                                 make_num_slider("lower_mold_temp1"),
                                 make_num_slider("lower_mold_temp2"),
-                                # make_num_slider("lower_mold_temp3"),
+                                make_num_slider("lower_mold_temp3"),
                                 make_num_slider("Coolant_temperature"),
                                 col_widths=[3,3,3,3]
                             )
@@ -1330,6 +1343,7 @@ def main_page(selected_tab: str):
                 ui.output_ui("improvement_section")
 
             ),
+            id="quality_subtabs",
         ),
         "analysis": analysis_page_ui()
     }
@@ -1449,7 +1463,17 @@ def main_page(selected_tab: str):
     )
 
 # ======== 전체 UI ========
-app_ui = ui.page_fluid(global_head, ui.output_ui("main_ui"))
+app_ui = ui.page_fluid(
+    ui.tags.style("""
+        table.dataframe, th, td {
+            text-align: center !important;
+            vertical-align: middle !important;
+        }
+    """),
+    global_head,
+    ui.output_ui("main_ui")
+)
+
 
 
 # ======== 서버 로직 ========
@@ -1739,14 +1763,10 @@ def server(input, output, session):
         # 날짜가 바뀔 때마다 현재 페이지 상태를 터미널(콘솔)에 출력합니다.
         current_state = page_state()
         active_tab = input.field_tabs()
-        print(f"===== 날짜 변경 감지됨 ===== 현재 페이지: {current_state}")
         # --- 🐞 디버깅 코드 끝 ---
 
         # ✅ 현재 페이지가 "field"일 때만 팝업 실행
         if current_state == "field" and active_tab == "생산현황":
-            
-            print(f"===== '{current_state}' 페이지이므로 팝업을 실행합니다.")
-            
             # --- 여기부터 기존 팝업 로직 ---
             ref_date_str = input.ref_date() or "2019-01-19"
             ref_date = pd.to_datetime(ref_date_str).normalize()
@@ -1843,18 +1863,6 @@ def server(input, output, session):
         else:
              print(f"===== '{current_state}' 페이지이므로 팝업을 표시하지 않습니다.")
 
-
-
-
-
-
-
-
-
-
-
-
-
     # ======== 📈 데이터 분석 탭 ========
    # --- 생산계획 탭 서버 로직 ---
     @render.ui
@@ -1868,7 +1876,6 @@ def server(input, output, session):
     DATA_PATH = pathlib.Path("./data/train_raw.csv")
     try:
         df_raw = pd.read_csv(DATA_PATH)
-        print(f"✅ 데이터 로드 완료: {df_raw.shape}")
     except Exception as e:
         print("⚠️ 데이터 로드 실패:", e)
         df_raw = pd.DataFrame()
@@ -1928,7 +1935,6 @@ def server(input, output, session):
     DATA_PATH = pathlib.Path("./data/train_raw.csv")
     try:
         df_raw = pd.read_csv(DATA_PATH)
-        print(f"✅ 데이터 로드 완료: {df_raw.shape}")
     except Exception as e:
         print("⚠️ 데이터 로드 실패:", e)
         df_raw = pd.DataFrame()
@@ -2112,7 +2118,7 @@ def server(input, output, session):
     @output
     @render.plot
     def stream_plot():
-        df = current_data()
+        df = current_data_kf()
         fig, ax = plt.subplots(figsize=(10, 4))
         if df.empty:
             ax.text(0.5, 0.5, "▶ Start Streaming", ha="center", va="center", fontsize=14)
@@ -2252,6 +2258,79 @@ def server(input, output, session):
         }
 
         return idx, xbars, ranges, baseline
+    
+    # ============================================================
+    # 🔹 X-R 관리도 로그 생성 함수 (UCL/LCL 초과 그룹 기록)
+    # ============================================================
+    def make_xr_overlog(df, col, baseline_xr, subgroup_size=5):
+        if len(df) < subgroup_size or col not in df.columns:
+            return pd.DataFrame({"변수": [col], "메시지": ["데이터 부족으로 로그 없음."]})
+
+        # ✅ real_time 처리
+        if "real_time" in df.columns:
+            df = df.copy()
+            df["real_time"] = pd.to_datetime(df["real_time"], errors="coerce")
+            df = df.reset_index(drop=True)
+
+        num_groups = len(df) // subgroup_size
+        used_df = df.iloc[:num_groups * subgroup_size].copy()
+        groups = np.array_split(used_df[col].values, num_groups)
+
+        # ✅ 각 그룹 대표 시간
+        if "real_time" in df.columns:
+            time_groups = np.array_split(df["real_time"].iloc[:num_groups * subgroup_size], num_groups)
+            group_times = [t.iloc[-1] if not t.empty else pd.NaT for t in time_groups]
+        else:
+            group_times = [np.nan] * num_groups
+
+        xbars = np.array([g.mean() for g in groups])
+        ranges = np.array([g.max() - g.min() for g in groups])
+
+        xbar_bar = np.mean(xbars)
+        r_bar = np.mean(ranges)
+        A2, D3, D4 = 0.577, 0, 2.115
+        baseline = {
+            "UCLx": xbar_bar + A2 * r_bar,
+            "LCLx": xbar_bar - A2 * r_bar,
+            "UCLr": D4 * r_bar,
+            "LCLr": D3 * r_bar,
+        }
+
+        logs = []
+        for i, (x, r, t) in enumerate(zip(xbars, ranges, group_times), start=1):
+            if x > baseline["UCLx"] or x < baseline["LCLx"]:
+                logs.append({
+                    "구분": "Xbar",
+                    "그룹번호": i,
+                    "시간": t.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(t) else "",
+                    "값": round(x, 3),
+                    "한계": f"{baseline['LCLx']:.3f} ~ {baseline['UCLx']:.3f}"
+                })
+            if r > baseline["UCLr"]:
+                logs.append({
+                    "구분": "Range",
+                    "그룹번호": i,
+                    "시간": t.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(t) else "",
+                    "값": round(r, 3),
+                    "한계": f"≤ {baseline['UCLr']:.3f}"
+                })
+
+        # ✅ 변수 및 메시지 컬럼 추가
+        if not logs:
+            return pd.DataFrame({
+                "변수": [col],
+                "메시지": ["✅ 모든 그룹이 관리범위 내입니다."],
+                "구분": [""],
+                "그룹번호": [""],
+                "시간": [""],
+                "값": [""],
+                "한계": [""]
+            })
+        else:
+            df_log = pd.DataFrame(logs)
+            df_log.insert(0, "변수", col)
+            df_log.insert(1, "메시지", "⚠️ 관리범위를 벗어난 그룹이 존재합니다.")
+            return df_log
 
 
     # ───────────────────────────────
@@ -2393,7 +2472,7 @@ def server(input, output, session):
     @render.plot
     def mv_chart_melting():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["molten_temp", "molten_volume"]
             idx, T2, UCL = calc_hotelling_t2(df, cols)
             return plot_t2_chart(idx, T2, UCL, "용융 단계")
@@ -2405,7 +2484,7 @@ def server(input, output, session):
     @render.table
     def mv_log_melting():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["molten_temp", "molten_volume"]
             return make_overlog(df, cols)
         except Exception:
@@ -2418,7 +2497,7 @@ def server(input, output, session):
     @render.plot
     def mv_chart_filling():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["sleeve_temperature", "EMS_operation_time",
                     "low_section_speed", "high_section_speed", "cast_pressure"]
             idx, T2, UCL = calc_hotelling_t2(df, cols)
@@ -2431,7 +2510,7 @@ def server(input, output, session):
     @render.table
     def mv_log_filling():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["sleeve_temperature", "EMS_operation_time",
                     "low_section_speed", "high_section_speed", "cast_pressure"]
             return make_overlog(df, cols)
@@ -2445,7 +2524,7 @@ def server(input, output, session):
     @render.plot
     def mv_chart_cooling():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
 
             # ✅ (추가) 한글 컬럼명을 영어로 자동 되돌리기
             reverse_map = {v: k for k, v in label_map.items()}
@@ -2477,7 +2556,7 @@ def server(input, output, session):
     @render.table
     def mv_log_cooling():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             reverse_map = {v: k for k, v in label_map.items()}
             df = df.rename(columns=reverse_map)   # ✅ inplace=False로 안전하게
     
@@ -2513,7 +2592,7 @@ def server(input, output, session):
     @render.plot
     def mv_chart_speed():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["facility_operation_cycleTime", "production_cycletime"]
             idx, T2, UCL = calc_hotelling_t2(df, cols)
             return plot_t2_chart(idx, T2, UCL, "생산 속도")
@@ -2525,7 +2604,7 @@ def server(input, output, session):
     @render.table
     def mv_log_speed():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["facility_operation_cycleTime", "production_cycletime"]
             return make_overlog(df, cols)
         except Exception:
@@ -2538,7 +2617,7 @@ def server(input, output, session):
     @render.plot
     def mv_chart_quality():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["biscuit_thickness", "physical_strength"]
             idx, T2, UCL = calc_hotelling_t2(df, cols)
             return plot_t2_chart(idx, T2, UCL, "제품 테스트")
@@ -2546,7 +2625,7 @@ def server(input, output, session):
             return make_placeholder_chart("제품 테스트")
     
     # ============================================================
-    # 🔹 X-R 관리도 출력 (Shiny 렌더) — 슬라이딩형 버전
+    # 🔹 X-R 관리도 출력 (Shiny 렌더) — 고정 높이 + 로그 아래 배치용
     # ============================================================
     @output
     @render.plot
@@ -2554,8 +2633,9 @@ def server(input, output, session):
         import matplotlib.pyplot as plt
 
         # ✅ 전체 누적 데이터 사용 (tail 제한 없음)
-        df = current_data()
+        df = current_data_kf()
         stage = input.xr_select()
+        stage = stage.split("] ")[-1]
 
         if stage not in XR_GROUPS:
             fig, ax = plt.subplots()
@@ -2565,13 +2645,16 @@ def server(input, output, session):
 
         cols = XR_GROUPS[stage]
         n = len(cols)
-        n_rows = max(n, 2)
-        fig, axes = plt.subplots(n_rows, 2, figsize=(12, 8))
-        if n_rows == 1:
-            axes = np.array([axes])
+        MAX_POINTS = 30
+        SUBGROUP_SIZE = 5
 
-        MAX_POINTS = 30       # ✅ 최근 30개 그룹만 표시
-        SUBGROUP_SIZE = 5     # ✅ 그룹 크기 고정
+        # ✅ 모든 변수별 subplot 높이를 일정하게 고정 (2.2 inch/col)
+        fig_height = n * 2.2
+        fig, axes = plt.subplots(n, 2, figsize=(12, fig_height), sharex=False)
+        plt.subplots_adjust(hspace=0.6)
+
+        if n == 1:
+            axes = np.array([axes])
 
         for i, (col, label) in enumerate(cols):
             result = calc_realtime_xr(df, col, BASELINE_XR, subgroup_size=SUBGROUP_SIZE)
@@ -2586,13 +2669,13 @@ def server(input, output, session):
             idx, xbars, ranges, baseline = result
             total_points = len(idx)
 
-            # ✅ 최근 30개만 표시 (슬라이딩 윈도우)
+            # ✅ 최근 30개 그룹만 표시
             if total_points > MAX_POINTS:
                 idx = idx[-MAX_POINTS:]
                 xbars = xbars[-MAX_POINTS:]
                 ranges = ranges[-MAX_POINTS:]
 
-            # ✅ Xbar 관리도
+            # 🔹 Xbar 관리도
             ax1.plot(idx, xbars, "o-", color="steelblue")
             ax1.axhline(baseline["UCLx"], color="red", ls="--")
             ax1.axhline(baseline["LCLx"], color="red", ls="--")
@@ -2601,7 +2684,7 @@ def server(input, output, session):
             ax1.grid(True, alpha=0.3)
             ax1.set_xlim(max(1, total_points - MAX_POINTS + 1) - 0.5, total_points + 0.5)
 
-            # ✅ R 관리도
+            # 🔹 R 관리도
             ax2.plot(idx, ranges, "o-", color="darkorange")
             ax2.axhline(baseline["UCLr"], color="red", ls="--")
             ax2.axhline(baseline["LCLr"], color="red", ls="--")
@@ -2622,7 +2705,7 @@ def server(input, output, session):
     @render.plot
     def xr_chart_melting():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = ["molten_temp", "molten_volume"]
             labels = ["용융 온도", "주입 금속량"]
             return xr_chart("용융 단계", df, cols, labels, BASELINE_XR)
@@ -2638,7 +2721,7 @@ def server(input, output, session):
     @render.plot
     def xr_chart_filling():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = [
                 "sleeve_temperature", "EMS_operation_time",
                 "low_section_speed", "high_section_speed", "cast_pressure"
@@ -2657,7 +2740,7 @@ def server(input, output, session):
     @render.plot
     def xr_chart_cooling():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             reverse_map = {v: k for k, v in label_map.items()}
             df = df.rename(columns=reverse_map)
 
@@ -2685,7 +2768,7 @@ def server(input, output, session):
     @render.plot
     def xr_chart_speed():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = ["facility_operation_cycleTime", "production_cycletime"]
             labels = ["설비 사이클", "생산 사이클"]
             return xr_chart("생산 속도", df, cols, labels, BASELINE_XR)
@@ -2701,13 +2784,159 @@ def server(input, output, session):
     @render.plot
     def xr_chart_quality():
         try:
-            df = current_data().tail(200)
+            df = current_data_kf().tail(200)
             cols = ["biscuit_thickness", "physical_strength"]
             labels = ["비스킷 두께", "제품 강도"]
             return xr_chart("제품 테스트", df, cols, labels, BASELINE_XR)
         except Exception as e:
             print("❌ XR 품질 단계 오류:", e)
             return make_placeholder_chart("제품 테스트 X-R 관리도")
+    
+    
+    # ============================================================
+    # 🔹 용융 단계 X-R 로그
+    # ============================================================
+    @output
+    @render.table
+    def xr_log_melting():
+        try:
+            df = current_data_kf().tail(200)
+            cols = ["molten_temp", "molten_volume"]
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
+            merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
+            return merged.reset_index(drop=True)
+        except Exception as e:
+            print("❌ XR 용융 로그 오류:", e)
+            return pd.DataFrame({"메시지": ["로그 생성 중 오류 발생."]})
+
+
+    # ============================================================
+    # 🔹 충진 단계 X-R 로그
+    # ============================================================
+    @output
+    @render.table
+    def xr_log_filling():
+        try:
+            df = current_data_kf().tail(200)
+            cols = ["sleeve_temperature", "EMS_operation_time",
+                    "low_section_speed", "high_section_speed", "cast_pressure"]
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
+            merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
+            return merged.reset_index(drop=True)
+        except Exception as e:
+            print("❌ XR 충진 로그 오류:", e)
+            return pd.DataFrame({"메시지": ["로그 생성 중 오류 발생."]})
+
+
+    # ============================================================
+    # 🔹 냉각 단계 X-R 로그
+    # ============================================================
+    @output
+    @render.table
+    def xr_log_cooling():
+        try:
+            df = current_data_kf().tail(200)
+            reverse_map = {v: k for k, v in label_map.items()}
+            df = df.rename(columns=reverse_map)
+            cols = ["upper_mold_temp1", "upper_mold_temp2",
+                    "lower_mold_temp1", "lower_mold_temp2", "Coolant_temperature"]
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols if c in df.columns]
+            merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
+            return merged.reset_index(drop=True)
+        except Exception as e:
+            print("❌ XR 냉각 로그 오류:", e)
+            return pd.DataFrame({"메시지": ["로그 생성 중 오류 발생."]})
+
+
+    # ============================================================
+    # 🔹 생산 속도 X-R 로그
+    # ============================================================
+    @output
+    @render.table
+    def xr_log_speed():
+        try:
+            df = current_data_kf().tail(200)
+            cols = ["facility_operation_cycleTime", "production_cycletime"]
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
+            merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
+            return merged.reset_index(drop=True)
+        except Exception as e:
+            print("❌ XR 속도 로그 오류:", e)
+            return pd.DataFrame({"메시지": ["로그 생성 중 오류 발생."]})
+
+
+    # ============================================================
+    # 🔹 제품 테스트 X-R 로그
+    # ============================================================
+    @output
+    @render.table
+    def xr_log_quality():
+        try:
+            df = current_data_kf().tail(200)
+            cols = ["biscuit_thickness", "physical_strength"]
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
+            merged = pd.concat(logs, keys=cols, names=["변수"]).reset_index(level=0)
+            return merged.reset_index(drop=True)
+        except Exception as e:
+            print("❌ XR 품질 로그 오류:", e)
+            return pd.DataFrame({"메시지": ["로그 생성 중 오류 발생."]})
+
+    @output
+    @render.table
+    def xr_log_table():
+        stage = input.xr_select()
+        stage = stage.split("] ")[-1]
+        df = current_data_kf().tail(200)
+
+        stage_cols = {
+            "용융 단계": ["molten_temp", "molten_volume"],
+            "충진 단계": ["sleeve_temperature", "EMS_operation_time",
+                         "low_section_speed", "high_section_speed", "cast_pressure"],
+            "냉각 단계": ["upper_mold_temp1", "upper_mold_temp2",
+                        "lower_mold_temp1", "lower_mold_temp2", "Coolant_temperature"],
+            "생산 속도": ["facility_operation_cycleTime", "production_cycletime"],
+            "제품 테스트": ["biscuit_thickness", "physical_strength"],
+        }
+
+        if stage not in stage_cols:
+            return pd.DataFrame({"메시지": ["단계 선택 필요."]})
+
+        try:
+            cols = stage_cols[stage]
+
+            # ✅ 각 변수별 로그 생성 (make_xr_overlog는 완성된 DF 반환)
+            logs = [make_xr_overlog(df, c, BASELINE_XR) for c in cols]
+            merged = pd.concat(logs, ignore_index=True)
+
+            # ✅ 한글 컬럼명 매핑
+            col_name_map = {
+                "molten_temp": "용융 온도",
+                "molten_volume": "주입한 금속 양",
+                "sleeve_temperature": "주입 관 온도",
+                "EMS_operation_time": "전자 교반(EMS) 가동 시간",
+                "low_section_speed": "하위 구간 주입 속도",
+                "high_section_speed": "상위 구간 주입 속도",
+                "cast_pressure": "주입 압력",
+                "upper_mold_temp1": "상부1 금형 온도",
+                "upper_mold_temp2": "상부2 금형 온도",
+                "lower_mold_temp1": "하부1 금형 온도",
+                "lower_mold_temp2": "하부2 금형 온도",
+                "Coolant_temperature": "냉각수 온도",
+                "facility_operation_cycleTime": "설비 사이클 시간",
+                "production_cycletime": "생산 사이클 시간",
+                "biscuit_thickness": "주조물 두께",
+                "physical_strength": "제품 강도",
+            }
+
+            # ✅ 변수명 한글로 변경
+            merged["변수"] = merged["변수"].replace(col_name_map)
+            merged.fillna("", inplace=True)
+            return merged
+
+        except Exception as e:
+            print("❌ XR 로그 테이블 오류:", e)
+            import traceback; traceback.print_exc()
+            return pd.DataFrame({"메시지": ["로그 표시 중 오류 발생."]})
 
 
 
@@ -2725,7 +2954,7 @@ def server(input, output, session):
     @render.table
     def mv_log_quality():
         try:
-            df = current_data().tail(50)
+            df = current_data_kf().tail(50)
             cols = ["biscuit_thickness", "physical_strength"]
             return make_overlog(df, cols)
         except Exception:
@@ -2737,7 +2966,7 @@ def server(input, output, session):
     def mv_group_ui():
         group = input.mv_group()
     
-        if group == "공정 관리":
+        if group == "공정 관리 팀":
             return ui.layout_columns(
                 ui.card(
                     ui.output_plot("mv_chart_melting"),
@@ -2787,7 +3016,7 @@ def server(input, output, session):
                 col_widths=[4, 4, 4]
             )
     
-        elif group == "생산 관리":
+        elif group == "생산 관리 팀":
             return ui.layout_columns(
                 ui.card(
                     ui.output_plot("mv_chart_speed"),
@@ -2807,7 +3036,7 @@ def server(input, output, session):
                 col_widths=[12]
             )
     
-        elif group == "제품 관리":
+        elif group == "제품 관리 팀":
             return ui.layout_columns(
                 ui.card(
                     ui.output_plot("mv_chart_quality"),
@@ -2847,7 +3076,7 @@ def server(input, output, session):
         label = speed_map.get(speed, "1x")
 
         # 색상 (스트리밍 중: 파랑 / 정지 시: 회색)
-        fast_color = "#60a5fa" if is_streaming() else "#9ca3af"
+        fast_color = "#60a5fa"
 
         return ui.div(
             {"style": "display:flex; gap:6px; align-items:center;"},
@@ -2874,10 +3103,7 @@ def server(input, output, session):
                     f"<span style='font-size:11px;'>{label}</span>"
                     f"</div>"
                 ),
-                style=btn_base + f"background-color:{fast_color}; "
-                                f"opacity:{1 if is_streaming() else 0.5}; "
-                                f"cursor:{'pointer' if is_streaming() else 'not-allowed'};",
-                disabled=not is_streaming(),
+                style=btn_base + f"background-color:{fast_color}; ",
                 title="빨리감기",
             ),
 
@@ -2906,7 +3132,8 @@ def server(input, output, session):
     async def _reset_stream():
         streamer().reset_stream()
         kf_streamer().reset_stream()
-        current_data.set(pd.DataFrame())
+        current_data_field.set(pd.DataFrame())
+        current_data_kf.set(pd.DataFrame())
         is_streaming.set(False)
         stream_speed.set(2.0)  # ✅ 배속 기본값으로 초기화
         alerts.set([])
@@ -2971,18 +3198,23 @@ def server(input, output, session):
         reactive.invalidate_later(stream_speed())
 
         page = page_state()
-        if page == "field":
-            s = streamer()
-        elif page == "quality":
-            s = kf_streamer()
-        else:
-            return
-
+    # if page == "field":
+        s = streamer()
         # 여러 행 들어올 수 있음 → 전부 큐에 적재
         next_batch = s.get_next_batch(1)
         if next_batch is not None and not next_batch.empty:
             for _, row in next_batch.iterrows():
                 data_queue.append(row.to_dict())
+    # elif page == "quality" or page == "analysis":
+        s = kf_streamer()
+        # 여러 행 들어올 수 있음 → 전부 큐에 적재
+        next_batch = s.get_next_batch(1)
+        if next_batch is not None and not next_batch.empty:
+            for _, row in next_batch.iterrows():
+                data_queue_kf.append(row.to_dict())
+    # else:
+    #     return
+
 
     # ======================================================
     # ② 큐에서 한 행씩 소비 (2초마다 한 건씩 처리)
@@ -2995,19 +3227,21 @@ def server(input, output, session):
 
         reactive.invalidate_later(stream_speed())
 
-        if not data_queue:
+        page = page_state()
+    # if page == "field":
+        if not data_queue and not data_queue_kf:
             return
 
         latest = data_queue.popleft()
 
         # ✅ 기존 데이터 가져와서 누적
-        df_old = current_data()
+        df_old = current_data_field()
         if df_old is None or df_old.empty:
             df_new = pd.DataFrame([latest])
         else:
             df_new = pd.concat([df_old, pd.DataFrame([latest])], ignore_index=True)
 
-        current_data.set(df_new)
+        current_data_field.set(df_new)
 
         # === 🚨 불량 감지 ===
         if latest.get("passorfail", 0) == 1:
@@ -3022,7 +3256,7 @@ def server(input, output, session):
         ]
         if numeric_keys:
             try:
-                df_check = current_data()
+                df_check = current_data_field()
                 if df_check is not None and len(df_check) > 10:
                     df_num = df_check[numeric_keys].select_dtypes(include="number")
                     means = df_num.mean()
@@ -3081,6 +3315,19 @@ def server(input, output, session):
             lst.extend(buf)
             alerts.set(lst[-100:])
             alert_buffer.set([])
+    # elif page == "quality" or page == "analysis":
+        # if not data_queue_kf:
+        #     return
+
+        latest = data_queue_kf.popleft()
+        df_old = current_data_kf()
+        df_new = pd.concat([df_old, pd.DataFrame([latest])], ignore_index=True)
+        current_data_kf.set(df_new)
+
+        ts = latest.get("real_time", None)
+        prob = latest.get("predict_prob", None)
+    # else:
+    #     return
 
     @output
     @render.ui
@@ -3132,9 +3379,9 @@ def server(input, output, session):
 
     def _get_shift(t):
         if datetime.time(8,0) <= t.time() < datetime.time(20,0):
-            return "Day"
+            return "주간"
         else:
-            return "Night"
+            return "야간"
 
     streaming_df["prod_date"] = streaming_df["real_time"].apply(_get_prod_date)
     streaming_df["shift"] = streaming_df["real_time"].apply(_get_shift)
@@ -3170,10 +3417,10 @@ def server(input, output, session):
 
         # --- 현재 교대 구간 ---
         if datetime.time(8,0) <= now.time() < datetime.time(20,0):
-            current_shift = "Day"
+            current_shift = "주간"
             shift_start = datetime.datetime.combine(now.date(), datetime.time(8,0))
         else:
-            current_shift = "Night"
+            current_shift = "야간"
             if now.time() >= datetime.time(20,0):
                 shift_start = datetime.datetime.combine(now.date(), datetime.time(20,0))
             else:
@@ -3213,9 +3460,7 @@ def server(input, output, session):
     @output
     @render.ui
     def process_status_card():
-        import datetime
-
-        df_live = current_data()
+        df_live = current_data_field()
 
         if df_live is None or df_live.empty:
             return ui.div(
@@ -3311,7 +3556,7 @@ def server(input, output, session):
     @output
     @render.ui
     def realtime_predict_card():
-        df_live = current_data()
+        df_live = current_data_field()
 
         if df_live is None or df_live.empty:
             return ui.div(
@@ -3368,7 +3613,7 @@ def server(input, output, session):
     @output
     @render.ui
     def stream_time_display():
-        df = current_data()
+        df = current_data_field()
         if df is None or df.empty:
             time_str = "-------- --:--:--"
         else:
@@ -3503,23 +3748,24 @@ def server(input, output, session):
     loading = reactive.value(False)
     local_factors = reactive.value(None)
 
-
-
-
     @output
     @render.data_frame
     def recent_data_table():
-        df = current_data()
+        df = current_data_field()
         if df is None or df.empty:
-            return pd.DataFrame({"알림": ["현재 수신된 데이터가 없습니다."]})
+            return render.DataGrid(
+                pd.DataFrame({"알림": ["현재 수신된 데이터가 없습니다."]}),
+                height="100%",
+                width="100%"
+            )
 
         data = df.copy()
 
-        # ✅ 2.5) passorfail 컬럼을 사람이 보기 좋게 한글 변환
+        # ✅ passorfail 한글 변환
         if "passorfail" in data.columns:
             data["passorfail"] = data["passorfail"].map({0: "양품", 1: "불량"}).fillna(data["passorfail"])
 
-        # 1) 3시그마 이상치 행 찾기
+        # ✅ 3σ 이상치와 불량 행 필터링
         numeric_cols = data.select_dtypes(include="number").columns.tolist()
         if numeric_cols:
             means = data[numeric_cols].mean()
@@ -3529,39 +3775,166 @@ def server(input, output, session):
         else:
             mask_3sigma = pd.Series(False, index=data.index)
 
-        # 2) 불량 행(passorfail==1) 찾기
         if "passorfail" in data.columns:
-            mask_fail = data["passorfail"] == 1
+            mask_fail = data["passorfail"] == "불량"
         else:
             mask_fail = pd.Series(False, index=data.index)
 
-        # 3) 두 조건 중 하나라도 맞는 행만 필터
         flagged = data[mask_3sigma | mask_fail].copy()
 
-        # 4) 없으면 “이상 행 없음” 표시(표는 1행 안내)
         if flagged.empty:
-            return pd.DataFrame({"알림": ["현재 3σ 이상치나 불량 행이 없습니다."]})
+            return render.DataGrid(
+                pd.DataFrame({"알림": ["현재 3σ 이상치나 불량 행이 없습니다."]}),
+                height="100%",
+                width="100%"
+            )
 
-        # 5) 보기 좋게 정리
-        #    - 최근 것부터 최대 200행
-        flagged = flagged.tail(200).round(2)
+        flagged = flagged.tail(200).round(2).reset_index(drop=True)
 
-        # 6) 한글 컬럼명으로 매핑(네가 선언한 label_map 재사용)
-        #    label_map에 없는 건 원래 이름 유지
+        # ✅ 컬럼명을 한글로 변환 (label_map 또는 COLUMN_NAMES_KR 사용)
         def to_kor(col):
-            return label_map.get(col, col)
+            # label_map 또는 COLUMN_NAMES_KR 중 사용 중인 맵을 자동 선택
+            if "label_map" in globals():
+                return label_map.get(col, col)
+            return col
+
         flagged.rename(columns={c: to_kor(c) for c in flagged.columns}, inplace=True)
 
-        # 7) 자주 보는 컬럼 앞으로 배치
+        # ✅ 주요 컬럼 앞으로 배치 (시간, 불량여부가 있으면 앞으로)
         prefer = [to_kor(c) for c in ["real_time", "passorfail"] if c in df.columns]
         other_cols = [c for c in flagged.columns if c not in prefer]
         flagged = flagged[prefer + other_cols] if prefer else flagged
 
-        return flagged.reset_index(drop=True)
+        # ✅ 핵심: 한 행만 선택 가능 + overflow visible 스타일 적용
+        return render.DataGrid(
+            flagged,
+            height="450px",
+            width="100%",
+            styles={
+                "overflow": "visible",          # ✅ 스크롤 전체 허용
+            },
+            row_selection_mode="single"
+        )
+
+    # ============================================================
+    # 📌 원인 분석 - 실시간 데이터 행 클릭 시 모달 표시
+    # ============================================================
+    # 최근 선택 인덱스 저장용 reactive 값
+    # ✅ 행 데이터 공유용 reactive 변수 추가
+    selected_row_for_prediction = reactive.Value(None)
+
+    # ✅ 마지막 선택 인덱스 기억
+    last_selected_index = reactive.Value(None)
+
+    @reactive.effect
+    def _handle_recent_row_selection():
+        selected = input.recent_data_table_selected_rows()
+
+        # 선택이 없으면 초기화만 하고 종료
+        if not selected:
+            last_selected_index.set(None)
+            return
+
+        idx = list(selected)[0]
+
+        # ✅ 이전과 같은 행이면 모달 재실행 방지
+        if last_selected_index() == idx:
+            return
+
+        last_selected_index.set(idx)
+
+        df = current_data_field()
+        if df is None or df.empty:
+            return
+
+        # 3σ + 불량 필터 동일하게 적용
+        data = df.copy()
+        if "passorfail" in data.columns:
+            data["passorfail"] = data["passorfail"].map({0: "양품", 1: "불량"}).fillna(data["passorfail"])
+
+        numeric_cols = data.select_dtypes(include="number").columns.tolist()
+        if numeric_cols:
+            means = data[numeric_cols].mean()
+            stds = data[numeric_cols].std().replace(0, np.nan)
+            z = (data[numeric_cols] - means) / stds
+            mask_3sigma = (z.abs() > 3).any(axis=1)
+        else:
+            mask_3sigma = pd.Series(False, index=data.index)
+
+        mask_fail = (data["passorfail"] == "불량") if "passorfail" in data.columns else pd.Series(False, index=data.index)
+        flagged = data[mask_3sigma | mask_fail].copy().tail(200).reset_index(drop=True)
+
+        if idx >= len(flagged):
+            return
+
+        row = flagged.iloc[idx].to_dict()
+
+        # ✅ 현재 행 데이터 저장 (예측탭에서 활용 가능)
+        selected_row_for_prediction.set(row)
+
+        # ✅ 모달 표시
+        ui.modal_show(
+            ui.modal(
+                ui.div(
+                    ui.h5("📋 선택된 행 상세 정보", style="font-weight:bold;"),
+                    ui.tags.table(
+                        {"class": "table table-striped table-bordered table-sm"},
+                        ui.tags.tbody(
+                            *[
+                                ui.tags.tr(
+                                    ui.tags.td(str(k), style="font-weight:bold; white-space:nowrap;"),
+                                    ui.tags.td(str(v))
+                                )
+                                for k, v in row.items()
+                            ]
+                        ),
+                    ),
+                    style="max-height:60vh; overflow-y:auto;"
+                ),
+                title=f"🔍 실시간 데이터 상세 (행 {idx + 1})",
+                easy_close=True,
+                footer=ui.div(
+                    {"style": "display:flex; justify-content:flex-end; gap:8px;"},
+                    ui.input_action_button("close_recent_modal", "닫기", class_="btn btn-secondary"),
+                    # ✅ 새 버튼: 예측 및 개선 탭으로 이동
+                    ui.input_action_button("goto_quality_prediction", "예측 및 개선 탭으로 이동", class_="btn btn-primary"),
+                ),
+            )
+        )
 
 
+    # ✅ 닫기 버튼 동작
+    @reactive.effect
+    @reactive.event(input.close_recent_modal)
+    def _close_recent_modal():
+        ui.modal_remove()
 
 
+    # ✅ "예측 및 개선 탭으로 이동" 버튼 동작
+    @reactive.effect
+    @reactive.event(input.goto_quality_prediction)
+    def _goto_quality_prediction():
+        ui.modal_remove()
+
+        row_data = selected_row_for_prediction()
+        if row_data:
+            print(f"📦 예측 및 개선 탭으로 전달된 행 데이터 ({len(row_data)}개 컬럼)")
+            for k, v in list(row_data.items())[:5]:
+                print(f"  {k}: {v}")
+            if len(row_data) > 5:
+                print("  ...")
+
+        # ✅ 상위 탭 전환 (품질 모니터링으로 이동)
+        try:
+            page_state.set("quality")
+        except Exception:
+            print("⚠️ page_state 미정의 — 필요시 제거 가능")
+
+        # ✅ 하위 탭 전환 (Shiny 내장 네비게이션 전환)
+        try:
+            ui.update_navs("quality_subtabs", selected="예측 및 개선")
+        except Exception:
+            print("⚠️ quality_subtabs ID를 가진 navset_tab이 존재해야 합니다.")
 
 
     @reactive.effect
@@ -3668,7 +4041,6 @@ def server(input, output, session):
                     new_val = current[col] - diff / 2  # baseline 쪽으로 50% 이동
                     update_slider(f"{col}_slider", value=float(new_val))
                     update_numeric(col, value=float(new_val))
-                    print(f"[반영됨] {col}: {current[col]} → {new_val} (baseline {baseline[col]})")
 
         # === ② 개선 후 자동 예측 ===
         try:
@@ -3866,7 +4238,7 @@ def server(input, output, session):
 
     @output
     @render.plot
-    def local_factor_plot():
+    def local_factor_plot_for_pred():
      factors = local_factors()
      if factors is None or factors.empty:
         fig, ax = plt.subplots()
@@ -3896,7 +4268,7 @@ def server(input, output, session):
     # === 여기에 local_factor_desc() 붙여넣기 ===
     @output
     @render.ui
-    def local_factor_desc():
+    def local_factor_desc_for_pred():
      factors = local_factors()
      if factors is None or factors.empty:
         return ui.markdown("아직 예측을 실행하지 않았습니다.")
@@ -3968,9 +4340,9 @@ def server(input, output, session):
 
         return ui.card(
             ui.card_header("불량 기여 요인 Top 5", style="text-align:center; background-color:#f8f9fa; font-weight:bold;"),
-            ui.output_plot("local_factor_plot"),
+            ui.output_plot("local_factor_plot_for_pred"),
             ui.hr(),
-            ui.output_ui("local_factor_desc")
+            ui.output_ui("local_factor_desc_for_pred")
         )
     prediction_done = reactive.Value(False)
 
@@ -4007,9 +4379,9 @@ def server(input, output, session):
         # 불량인 경우만 표시
         return ui.card(
             ui.card_header("불량 기여 요인 Top 5", style="text-align:center; background-color:#f8f9fa; font-weight:bold;"),
-            ui.output_plot("local_factor_plot"),
+            ui.output_plot("local_factor_plot_for_pred"),
             ui.hr(),
-            ui.output_ui("local_factor_desc")
+            ui.output_ui("local_factor_desc_for_pred")
         )
 
 
@@ -4025,7 +4397,7 @@ def server(input, output, session):
     @output
     @render.plot
     def local_factor_plot():
-        df = current_data()
+        df = current_data_kf()
         if df is None or df.empty:
             fig, ax = plt.subplots()
             ax.text(0.5, 0.5, "실시간 데이터 수신 대기 중...", ha="center", va="center", fontsize=13)
@@ -4062,7 +4434,7 @@ def server(input, output, session):
     @output
     @render.ui
     def local_factor_desc():
-        df = current_data()
+        df = current_data_kf()
         if df is None or df.empty:
             return ui.p("⚪ 실시간 데이터 수신 중이 아닙니다.", style="color:gray;")
 
@@ -4147,7 +4519,7 @@ def server(input, output, session):
         sensor = labels[idx]
         selected_sensor.set(sensor)
 
-        df = current_data()
+        df = current_data_kf()
         if df is None or df.empty or sensor not in df.columns:
             return
 
@@ -4167,7 +4539,7 @@ def server(input, output, session):
     @render.plot
     def sensor_detail_plot():
         sensor = selected_sensor.get()
-        df = current_data()
+        df = current_data_kf()
         if not sensor or df is None or df.empty or sensor not in df.columns:
             fig, ax = plt.subplots()
             ax.axis("off")
@@ -4270,7 +4642,7 @@ def server(input, output, session):
     @output
     @render.plot
     def local_factor_plot():
-        df = current_data()
+        df = current_data_kf()
         if df is None or df.empty:
             fig, ax = plt.subplots()
             ax.text(0.5, 0.5, "실시간 데이터 수신 대기 중...", ha="center", va="center", fontsize=13)
@@ -4338,7 +4710,7 @@ def server(input, output, session):
         if idx is None:
             return
 
-        df = current_data()
+        df = current_data_kf()
         if df is None or df.empty:
             return
 
@@ -4415,423 +4787,327 @@ def server(input, output, session):
 
 # 🟢 TAB2. 품질 끝
 # ============================================================
-
-
-
-
 # ============================================================
-# 🟢 TAB3. 데이터 분석
-# ============================================================
+    # 🟢 TAB3. 데이터 분석 (오른쪽 상단 스트리밍 제어 기반)
+    # ======================================================
+    # ⚙️ KFStreamer 기반 실시간 데이터 스트리밍
+    # ======================================================
 
-
-
-
-# ============================================================
-# 🟢 TAB3. 데이터 분석 (서버 로직)
-# ============================================================
-
-    # ------------------------------------------------------------
-    # ⚙️ 1. 스트리밍 주기 (초)
-    # ------------------------------------------------------------
-    def stream_speed2() -> float:
-        """루프 실행 주기 (초)"""
-        return 1.0
-
-
-    # ------------------------------------------------------------
-    # ⚙️ 2. 전처리 함수 basic_fix (모델 pickle 참조용)
-    # ------------------------------------------------------------
-    def basic_fix(df: pd.DataFrame) -> pd.DataFrame:
-        df = df.copy()
-
-        # tryshot_signal 변환
-        if "tryshot_signal" in df.columns:
-            df["tryshot_signal"] = df["tryshot_signal"].apply(
-                lambda x: 1 if str(x).upper() == "D" else 0
-            )
-
-        # speed_ratio 관련 처리
-        if {"speed_ratio", "low_section_speed", "high_section_speed"} <= set(df.columns):
-            df.loc[df["speed_ratio"].isin([np.inf, -np.inf]), "speed_ratio"] = -1
-            df.loc[
-                (df["low_section_speed"] == 0) & (df["high_section_speed"] == 0),
-                "speed_ratio"
-            ] = -2
-
-        # pressure_speed_ratio 처리
-        if "pressure_speed_ratio" in df.columns:
-            df.loc[np.isinf(df["pressure_speed_ratio"]), "pressure_speed_ratio"] = -1
-
-        return df
-
-
-    # joblib 모델이 이 함수를 찾을 수 있게 등록
-    import sys
-    sys.modules["__main__"].basic_fix = basic_fix
-
-
-    # ------------------------------------------------------------
-    # ⚙️ 3. CSV 스트리머 클래스
-    # ------------------------------------------------------------
-    class MyStreamer:
-        """CSV 파일을 한 줄씩 스트리밍 (앱 시작 시 미리 로드)"""
-
-        def __init__(self, path, chunk_size=1, loop=True):
-            self.path = pathlib.Path(path)
-            self.chunk_size = chunk_size
-            self.loop = loop
-            self.index = 0
-            self.df = None  # 처음에 None으로 초기화
-
-            # ✅✅✅ 앱 시작 시 파일을 미리 로드합니다. ✅✅✅
-            try:
-                if not self.path.exists():
-                    print(f"⚠️ [Streamer Init] 파일 없음: {self.path}")
-                    return  # self.df는 None으로 유지됨
-
-                print(f"⏳ [Streamer Init] {self.path.name} 로드 중...")
-                self.df = pd.read_csv(self.path, low_memory=False)
-
-                if self.df.empty:
-                    print("⚠️ [Streamer Init] CSV 파일이 비어있음")
-                    self.df = None  # 비어있으면 None으로 다시 설정
-                else:
-                    print(f"✅ [Streamer Init] MyStreamer 로드 완료 ({len(self.df)}행)")
-            
-            except Exception as e:
-                print(f"⚠️ [Streamer Init] MyStreamer 로드 실패: {e}")
-                self.df = None # 로드 실패 시 None으로 유지
-            # ✅✅✅ 여기까지 수정 ✅✅✅
-
-
-        def reset(self):
-            self.index = 0
-            print("🔄 MyStreamer 리셋")
-
-        def stream(self):
-            try:
-                # ✅✅✅ 'self.df is None' 검사 로직 수정 ✅✅✅
-                # (파일 로딩 코드를 __init__으로 옮겼습니다)
-                if self.df is None:
-                    print("⚠️ MyStreamer.df가 None입니다. (파일 로드 실패 또는 비어있음)")
-                    return None
-                # ✅✅✅ 여기까지 수정 ✅✅✅
-
-                if self.index >= len(self.df):
-                    if self.loop:
-                        print("🔁 EOF → 루프 재시작")
-                        self.index = 0
-                    else:
-                        print("🏁 스트리밍 종료")
-                        return None
-
-                chunk = self.df.iloc[self.index : self.index + self.chunk_size].copy()
-                self.index += self.chunk_size
-                return chunk
-
-            except Exception as e:
-                print(f"⚠️ MyStreamer 오류: {e}")
-                return None
-
-    # ------------------------------------------------------------
-    # ⚙️ 4. 모델 및 메타 로드
-    # ------------------------------------------------------------
-    MODEL_PATH = "./models/fin_xgb_f20.pkl"
-    META_PATH = "./models/fin_xgb_meta_f20.json"
-    TARGET = "passorfail"
-
-    try:
-        print("🔍 모델 로드 중…")
-        model = joblib.load(MODEL_PATH)
-        with open(META_PATH, "r", encoding="utf-8") as f:
-            META = json.load(f)
-        print("✅ 모델 및 메타 로드 완료")
-    except Exception as e:
-        print(f"⚠️ 모델 로드 실패: {e}")
-        model, META = None, {}
-
-    model_features = META.get("features", [])
-    best_threshold = float(META.get("best_threshold", 0.5))
-
-
-    # ------------------------------------------------------------
-    # ⚙️ 5. 상태 변수 정의
-    # ------------------------------------------------------------
-    analy_streamer = MyStreamer("./data/fin_test_kf_fixed.csv", chunk_size=1, loop=True)
-    is_analysis_streaming = reactive.Value(False)
-    analysis_data = reactive.Value(pd.DataFrame())
-    log_df = reactive.Value(pd.DataFrame(columns=["time", "prob", "pred", "true", "result"]))
-    latency_list = reactive.Value([])
-
-
-    # ------------------------------------------------------------
-    # ▶ 6. 스트리밍 제어 버튼
-    # ------------------------------------------------------------
+   
+    # ------------------------------------------------------
+    # ⚙️ 스트리밍 제어 버튼 (UI)
+    # ------------------------------------------------------
     @render.ui
-    def stream_control_ui():
-        btn_text = "⏹ 스트리밍 중지" if is_analysis_streaming() else "▶ 스트리밍 시작"
-        color = "#d9534f" if is_analysis_streaming() else "#5cb85c"
-        return ui.input_action_button(
-            "toggle_stream", btn_text, style=f"background-color:{color};color:white;"
+    def sidebar_realtime_panel():
+        df = current_data_kf()
+        n = len(df)
+        status = "🟢 수신 중" if is_streaming() else "🔴 정지"
+        last_ts, avg_prob = "-", "-"
+
+        if n > 0 and "real_time" in df.columns:
+            ts = pd.to_datetime(df["real_time"], errors="coerce")
+            last_ts = str(ts.iloc[-1]) if not ts.isna().all() else "-"
+            avg_prob = f"{df['predict_prob'].tail(50).mean():.3f}"
+
+        sliders = ui.div(
+            ui.h6("⚠️ 위험구간 설정"),
+            ui.input_slider("risk_low", "하한 위험", min=0.0, max=1.0, value=0.10, step=0.01),
+            ui.input_slider("risk_high", "상한 위험", min=0.0, max=1.0, value=0.90, step=0.01),
+            class_="mt-3"
         )
 
+        html = f"""
+        <div style='font-size:14px; line-height:1.6'>
+        <h6>📶 실시간 제어 상황</h6>
+        <div>상태: <b>{status}</b></div>
+        <div>누적 수신 건수: <b>{n}</b> 건</div>
+        <div>마지막 수신 시각: <b>{last_ts}</b></div>
+        <div>최근 평균 확률(50건): <b>{avg_prob}</b></div>
+        <hr/>
+        </div>
+        """
+        return ui.div(
+    ui.HTML(html),
+    ui.input_action_button(
+        "toggle_stream",
+        "▶ 스트리밍 시작 / 정지",
+        class_="btn btn-outline-primary w-100 mt-3"
+    )
+)
 
+    # ------------------------------------------------------
+    # ▶ 스트리밍 토글
+    # ------------------------------------------------------
     @reactive.effect
     @reactive.event(input.toggle_stream)
     def _toggle_stream():
-        current = is_analysis_streaming()
-        is_analysis_streaming.set(not current)
+        current = is_streaming()
+        is_streaming.set(not current)
         if not current:
-            analy_streamer.reset()
-            print("▶ 스트리밍 시작됨")
+            data_queue.clear()
+            print("▶ 스트리밍 시작됨 (5초 주기)")
         else:
             print("⏹ 스트리밍 중지됨")
 
+    # ------------------------------------------------------
+    # 📊 누적 성능 지표 계산 함수
+    # ------------------------------------------------------
+    def get_metrics(df):
+        """전체 데이터 기준 누적 성능 지표 및 요약 통계"""
+        if df.empty or "predict" not in df or "passorfail" not in df:
+            return {
+                "Accuracy": 0.0, "Precision": 0.0, "Recall": 0.0, "F1": 0.0,
+                "Total": 0, "Mismatch": 0, "Avg_Prob": 0.0
+            }
 
-    # ------------------------------------------------------------
-    # ▶ 7. 스트리밍 루프
-    # ------------------------------------------------------------
-    @reactive.effect
-    def _stream_loop():
-        invalidate_later(stream_speed2())  # 주기적 실행
-        if not is_analysis_streaming():
-            return
-        try:
-            chunk = analy_streamer.stream()
-            if chunk is not None and not chunk.empty:
-                old = analysis_data()
-                new_df = pd.concat([old, chunk], ignore_index=True).tail(500)
-                analysis_data.set(new_df)
-                print(f"📦 새 데이터 수신 ({len(chunk)}행)")
-        except Exception as e:
-            print(f"⚠️ 스트리밍 오류: {e}")
+        y_true = df["passorfail"]
+        y_pred = df["predict"]
+        total = len(df)
+        mismatch = (y_true != y_pred).sum()
+        avg_prob = df["predict_prob"].mean() if "predict_prob" in df else 0.0
 
-
-    # ------------------------------------------------------------
-    # 🧠 8. 실시간 예측 루프
-    # ------------------------------------------------------------
-    @reactive.effect
-    def _predict_loop():
-        invalidate_later(stream_speed2())
-        if not is_analysis_streaming() or model is None:
-            return
-        df = analysis_data()
-        if df.empty:
-            return
-
-        try:
-            latest = df.iloc[-1:].copy()
-            try:
-                latest = basic_fix(latest)
-            except Exception:
-                pass
-
-            X = latest.drop(columns=[TARGET], errors="ignore")
-            for col in model_features:
-                if col not in X.columns:
-                    X[col] = 0
-            if model_features:
-                X = X[model_features]
-
-            if hasattr(model, "predict_proba"):
-                prob = float(model.predict_proba(X)[0, 1])
-            else:
-                prob = float(model.predict(X)[0])
-
-            pred = int(prob >= best_threshold)
-            y_true = None
-            if TARGET in latest.columns:
-                try:
-                    y_true = int(latest[TARGET].values[0])
-                except Exception:
-                    y_true = None
-
-            result = "✅ 정상" if y_true is not None and pred == y_true else "❌ 불일치"
-            ts = latest["real_time"].iloc[0] if "real_time" in latest.columns else datetime.datetime.now()
-
-            latency = np.random.uniform(10, 50)
-            latency_list.set((latency_list.get() + [latency])[-30:])
-
-            new_row = pd.DataFrame([{
-                "time": ts, "prob": prob, "pred": pred, "true": y_true, "result": result
-            }])
-            log_df.set(pd.concat([log_df(), new_row], ignore_index=True).tail(500))
-
-        except Exception as e:
-            print(f"⚠️ 예측 오류: {e}")
+        return {
+            "Accuracy": accuracy_score(y_true, y_pred),
+            "Precision": precision_score(y_true, y_pred, zero_division=0),
+            "Recall": recall_score(y_true, y_pred, zero_division=0),
+            "F1": f1_score(y_true, y_pred, zero_division=0),
+            "Total": total,
+            "Mismatch": mismatch,
+            "Avg_Prob": avg_prob
+        }
 
 
-    # ------------------------------------------------------------
-    # 📡 9. 통신 상태 표시
-    # ------------------------------------------------------------
+        # ------------------------------------------------------
+    # ------------------------------------------------------
+ # ------------------------------------------------------
+    # 📈 누적 성능 지표 (전체 + Mold별 Compact Version)
+    # ------------------------------------------------------
     @render.ui
-    def comm_status():
-        color = "green" if is_analysis_streaming() else "red"
-        text = "정상 연결" if is_analysis_streaming() else "연결 끊김"
-        return ui.HTML(f"<b>📡 통신 상태:</b> <span style='color:{color}'>{text}</span>")
+    def metric_cards():
+        df = current_data_kf()
+        if df.empty or "predict" not in df or "passorfail" not in df:
+            return ui.h6("⚠️ 데이터가 부족하여 성능 지표를 계산할 수 없습니다.", style="color:#999; font-size:13px;")
 
+        # === 1️⃣ 전체 지표 계산 ===
+        metrics_all = get_metrics(df)
 
-    # ------------------------------------------------------------
-    # 📈 10. Latency 그래프 (기존 코드)
-    # ------------------------------------------------------------
+        # === 2️⃣ mold_code별 지표 계산 ===
+        mold_metrics = []
+        if "mold_code" in df.columns:
+            for code, sub in df.groupby("mold_code"):
+                mold_metrics.append((code, get_metrics(sub)))
+
+        # === 카드 내부 progress bar ===
+        def progress_card(title, value, color):
+            bar_width = f"{value * 100:.1f}%"
+            return ui.div(
+                {
+                    "style": (
+                        "width:24%; background:#f8f9fa; border-radius:6px; padding:6px 8px; "
+                        "text-align:center; box-shadow:0 1px 2px rgba(0,0,0,0.05);"
+                    )
+                },
+                ui.h6(title, {"style": "margin-bottom:3px; color:#333; font-size:12px;"}),
+                ui.div(
+                    {"style": "height:8px; width:100%; background:#e9ecef; border-radius:4px; overflow:hidden; margin-bottom:3px;"},
+                    ui.div({"style": f"height:100%; width:{bar_width}; background:{color};"})
+                ),
+                ui.h6(f"{value*100:.1f}%", {"style": "margin:0; color:#111; font-size:13px;"})
+            )
+
+        colors = {"Accuracy": "#007bff", "Precision": "#28a745", "Recall": "#ffc107", "F1": "#dc3545"}
+
+        # === 3️⃣ 전체 모델 기준 카드 ===
+        cards_all = ui.div(
+            {"style": "display:flex; justify-content:space-between; gap:5px;"},
+            progress_card("Accuracy", metrics_all["Accuracy"], colors["Accuracy"]),
+            progress_card("Precision", metrics_all["Precision"], colors["Precision"]),
+            progress_card("Recall", metrics_all["Recall"], colors["Recall"]),
+            progress_card("F1", metrics_all["F1"], colors["F1"])
+        )
+
+        summary_all = ui.div(
+            {"style": "margin-top:4px; text-align:center; color:#555; font-size:12px;"},
+            ui.tags.b("전체 모델 기준  "),
+            ui.tags.span(f"총 {metrics_all['Total']}건 | 불일치 {metrics_all['Mismatch']}건 | 평균 확률 {metrics_all['Avg_Prob']:.3f}")
+        )
+
+        # === 4️⃣ Mold별 지표 카드들 ===
+        mold_sections = []
+        for code, m in mold_metrics:
+            mold_cards = ui.div(
+                {"style": "display:flex; justify-content:space-between; gap:5px; margin-top:6px;"},
+                progress_card("Accuracy", m["Accuracy"], colors["Accuracy"]),
+                progress_card("Precision", m["Precision"], colors["Precision"]),
+                progress_card("Recall", m["Recall"], colors["Recall"]),
+                progress_card("F1", m["F1"], colors["F1"])
+            )
+            summary = ui.div(
+                {"style": "margin-top:3px; text-align:center; color:#666; font-size:11px;"},
+                ui.tags.b(f"Mold {code}: "),
+                ui.tags.span(f"{m['Total']}건 | 불일치 {m['Mismatch']}건 | 평균확률 {m['Avg_Prob']:.3f}")
+            )
+            mold_sections.append(ui.div(mold_cards, summary))
+
+        # === 5️⃣ 전체 결합 ===
+        return ui.div(
+            {"style": "padding:4px 6px;"},
+            ui.h6("전체 모델 기준", {"style": "font-size:13px; font-weight:bold; margin-bottom:4px; color:#222;"}),
+            cards_all,
+            summary_all,
+            ui.hr({"style": "margin:8px 0;"}),
+            ui.h6("Mold Code별 성능", {"style": "font-size:12px; font-weight:bold; margin-bottom:3px; color:#333;"}),
+            *mold_sections
+        )
+
+    # ------------------------------------------------------
+    # 📈 실시간 예측 확률 + Threshold + Mismatch 표시
+    # ------------------------------------------------------
     @render.plot
-    def latency_plot():
-        # ... (기존 latency_plot 코드) ...
-        return fig
-
-    # ✅✅✅ 10-B. [신규] 메인 예측 확률 그래프 ✅✅✅
-    # ( latency_plot 함수 뒤에 추가하세요 )
-    @render.plot
+    @reactive.event(current_data_kf)
     def main_analysis_plot():
-        df = log_df() # 실시간 로그 데이터 사용
-        
-        # 1단계에서 추가한 슬라이더 값 가져오기
-        thresh = input.analysis_threshold() or 0.5 
-
+        df = current_data_kf()
         fig, ax = plt.subplots(figsize=(10, 4))
-        
+
         if df.empty:
-            ax.text(0.5, 0.5, "▶ 스트리밍을 시작하세요", ha="center", va="center", fontsize=14)
+            ax.text(0.5, 0.5, "데이터가 아직 없습니다.\n▶ 상단의 스트리밍 재생 버튼을 눌러주세요.",
+                    ha="center", va="center", fontsize=12)
             ax.axis("off")
             return fig
 
-        # 최근 100개 데이터만 표시
-        df_tail = df.tail(100).reset_index(drop=True) 
-        
-        # 1. 예측 확률 라인 그래프 (스케치의 파란색 물결)
-        ax.plot(df_tail.index, df_tail["prob"], marker='o', linestyle='-', label="예측 확률 (Prob)", zorder=2)
-        
-        # 2. Threshold 라인 (스케치의 빨간색 점선)
-        ax.axhline(y=thresh, color='r', linestyle='--', label=f"Threshold ({thresh:.2f})", zorder=3)
-        
-        # 3. Threshold 상회 값 강조
-        above = df_tail[df_tail["prob"] >= thresh]
-        ax.scatter(above.index, above["prob"], color='red', zorder=5, label="불량 예측")
+        d = df.copy()
+        d["ts"] = pd.to_datetime(d["real_time"], errors="coerce", format="%Y-%m-%d %H:%M")
+        d = d.dropna(subset=["ts"])
 
-        ax.set_title("실시간 불량 예측 확률 (최근 100건)")
-        ax.set_xlabel("Data Point (Recent)")
-        ax.set_ylabel("Probability (0:양품 ~ 1:불량)")
-        ax.set_ylim(0, 1) # Y축 0~1 고정
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+        low = input.risk_low() if input.risk_low() is not None else 0.1
+        high = input.risk_high() if input.risk_high() is not None else 0.9
+        threshold_user = input.analysis_threshold() if input.analysis_threshold() is not None else 0.5
+        threshold_base = 0.8303911993972466
+
+        mold_codes = d["mold_code"].unique()
+        colors = plt.cm.tab10.colors
+
+        for i, mcode in enumerate(mold_codes):
+            sub = d[d["mold_code"] == mcode].sort_values("ts")
+            color = colors[i % len(colors)]
+            ax.plot(sub["ts"], sub["predict_prob"], color=color, linewidth=1.8, alpha=0.8, label=f"Mold {mcode}")
+
+        mismatch = d[d["predict"] != d["passorfail"]]
+        if not mismatch.empty:
+            ax.scatter(mismatch["ts"], mismatch["predict_prob"],
+                    color="red", marker="x", s=60, linewidths=2,
+                    label="Mismatch (Predict ≠ PassOrFail)")
+
+        ax.axhspan(low, high, color="yellow", alpha=0.2, label=f"Risk Zone ({low:.2f}–{high:.2f})")
+        ax.axhline(threshold_base, color="gray", linestyle="--", linewidth=1.5, label=f"Base Threshold = {threshold_base:.3f}")
+        ax.axhline(threshold_user, color="red", linestyle="--", linewidth=1.8, label=f"User Threshold = {threshold_user:.2f}")
+
+        ax.set_title("실시간 예측 확률 스트리밍 (전체 Mold 기준)", fontsize=12, pad=10)
+        ax.set_xlabel("Real Time", fontsize=10)
+        ax.set_ylabel("Predict Probability", fontsize=10)
+        ax.legend(loc="upper right", fontsize=9)
+        ax.grid(True, linestyle="--", alpha=0.3)
         plt.tight_layout()
         return fig
 
 
-   # ------------------------------------------------------------
-    # 📈 10. Latency 그래프
-    # ------------------------------------------------------------
+    # ------------------------------------------------------
+    # 📈 모델 응답 지연 (Latency)
+    # ------------------------------------------------------
     @render.plot
+    @reactive.event(current_data_kf)
     def latency_plot():
-        lst = latency_list.get()
-        
-        # ✅✅✅ `fig`와 `ax`를 if 문보다 먼저 정의합니다. ✅✅✅
-        fig, ax = plt.subplots(figsize=(5, 3))
-        
-        if not lst:
-            ax.text(0.5, 0.5, "Latency 데이터 없음", ha="center", va="center")
+        df = current_data_kf()
+        fig, ax = plt.subplots(figsize=(10, 4))
+
+        if df.empty or "predict_time" not in df.columns:
+            ax.text(0.5, 0.5, "데이터가 아직 없습니다.\n▶ 스트리밍을 시작하세요.",
+                    ha="center", va="center", fontsize=12)
             ax.axis("off")
-            return fig  # 👈 데이터가 없어도 `fig`를 반환
-        
-        # --- 데이터가 있을 때 그리는 로직 ---
-        ax.plot(lst, marker="o", color="#5cb85c")
-        ax.set_title("모델 응답 지연 (ms)")
-        ax.set_ylabel("ms")
-        ax.grid(alpha=0.3)
+            return fig
+
+        d = df.copy()
+        d["ts"] = pd.to_datetime(d["real_time"], errors="coerce", format="%Y-%m-%d %H:%M")
+        d = d.dropna(subset=["ts", "predict_time"])
+
+        d["predict_time"] = pd.to_numeric(d["predict_time"], errors="coerce")
+        ax.plot(d["ts"], d["predict_time"], color="orange", label="Predict Time (s)", alpha=0.7)
+
+        if len(d) >= 5:
+            avg_latency = d["predict_time"].tail(50).mean()
+            ax.axhline(avg_latency, color="red", linestyle="--", alpha=0.5, label=f"Avg: {avg_latency:.3f}s")
+
+        ax.set_title("모델 응답 지연 (Latency)")
+        ax.set_xlabel("Real Time")
+        ax.set_ylabel("Predict Time (s)")
+        ax.legend()
         plt.tight_layout()
-        
         return fig
 
+    risk_log = deque(maxlen=100)  # 최근 100건까지만 저장
 
-    # ------------------------------------------------------------
-    # 📜 12. 로그 뷰어
-    # ------------------------------------------------------------
+    # ------------------------------------------------------
+    # ------------------------------------------------------
+    # 🧠 위험 구간 감시용 로그 (reactive 상태)
+    # ------------------------------------------------------
+    risk_log = reactive.value(pd.DataFrame(columns=[
+        "real_time", "mold_code", "predict_prob", "predict", "passorfail"
+    ]))
+
+    # ------------------------------------------------------
+    # ⚠️ 위험 구간 감시 (stream 소비 시점)
+    # ------------------------------------------------------
+    @reactive.effect
+    @reactive.event(current_data_kf)
+    def _risk_zone_monitor():
+        df = current_data_kf()
+        if df.empty:
+            return
+
+        low = input.risk_low() if input.risk_low() is not None else 0.1
+        high = input.risk_high() if input.risk_high() is not None else 0.9
+
+        last_row = df.iloc[-1]
+
+        prob = float(last_row.get("predict_prob", 0))
+        if low <= prob <= high:
+            logs = risk_log()
+            new_row = pd.DataFrame([{
+                "real_time": last_row.get("real_time", ""),
+                "mold_code": last_row.get("mold_code", ""),
+                "predict_prob": prob,
+                "predict": last_row.get("predict", ""),
+                "passorfail": last_row.get("passorfail", "")
+            }])
+            updated = pd.concat([new_row, logs], ignore_index=True).head(50)  # 최근 50개까지만
+            risk_log.set(updated)
+
+    # ------------------------------------------------------
+    # 📋 실시간 예측 로그 UI 출력 (테이블 형태)
+    # ------------------------------------------------------
     @render.ui
     def log_viewer():
-        # ... (기존 log_viewer 함수 코드) ...
-        return ui.HTML(f"<div style='max-height:300px;overflow-y:auto;font-size:13px'>{html}</div>")
+        df = risk_log()
+        if df.empty:
+            return ui.h6("📄 현재까지 위험구간 예측이 없습니다.",
+                        style="color:#777; font-size:13px;")
 
-    # ✅✅✅ 여기부터 붙여넣기 시작 ✅✅✅
-    # ------------------------------------------------------------
-    # ⚙️ [신규] Mold Code 드롭다운 업데이트
-    # ------------------------------------------------------------
-    @reactive.effect
-    def _update_mold_select():
-        try:
-            if analy_streamer.df is not None:
-                # 스트리머 데이터에서 고유한 mold_code 목록 추출
-                mold_codes = sorted(analy_streamer.df['mold_code'].unique().astype(str))
-                
-                # 드롭다운 선택지 생성 ({"all": "전체", "8412": "Mold Code 8412", ...})
-                choices = {"all": "전체"}
-                choices.update({code: f"Mold Code {code}" for code in mold_codes})
-                
-                # UI의 input_select 업데이트
-                ui.update_select(
-                    "analysis_mold_select",
-                    choices=choices,
-                    selected="all"
-                )
-                print("✅ Mold code 드롭다운 메뉴가 업데이트되었습니다.")
-            else:
-                print("⚠️ Mold code를 업데이트하기 위한 스트리머 데이터가 없습니다.")
-        except Exception as e:
-            print(f"❌ Mold code 드롭다운 업데이트 실패: {e}")
+        # 표를 HTML로 변환
+        table_html = df.to_html(
+            index=False,
+            classes="table table-striped table-sm",
+            border=0,
+            justify="center"
+        )
 
-    # ------------------------------------------------------------
-    # ⚙️ [신규] 선택된 Mold Code로 데이터 필터링
-    # ------------------------------------------------------------
-    @reactive.calc
-    def filtered_log_df():
-        df = log_df()
-        selected_mold = input.analysis_mold_select()
-        
-        # '전체'가 선택되거나 데이터가 없으면 원본 반환
-        if df.empty or selected_mold == "all":
-            return df
-        
-        # 선택된 mold_code로 데이터 필터링하여 반환
-        return df[df["mold_code"] == selected_mold].copy()
-    # ✅✅✅ 여기까지 붙여넣기 끝 ✅✅✅
-
-# =====================================================
-# 📘 mold_code별 6시그마 계산
-# =====================================================
-# INPUT_FILE = "./data/fin_train.csv"
-# OUTPUT_FILE = "./www/sixsigma_thresholds_by_mold.json"
-
-# os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-
-# df = pd.read_csv(INPUT_FILE)
-
-# # 숫자형 컬럼만 선택 (mold_code 제외)
-# num_cols = df.select_dtypes(include=["number"]).columns
-# if "mold_code" in num_cols:
-#     num_cols = num_cols.drop("mold_code")
-
-# thresholds = {}
-
-# for mold, group in df.groupby("mold_code"):
-#     mold_dict = {}
-#     for col in num_cols:
-#         mu = group[col].mean()
-#         sigma = group[col].std()
-
-#         # NaN이나 비정상 값 처리
-#         if pd.isna(mu) or pd.isna(sigma):
-#             continue
-
-#         mu = float(np.nan_to_num(mu, nan=0.0))
-#         sigma = float(np.nan_to_num(sigma, nan=0.0))
-#         mold_dict[col] = {"mu": round(mu, 4), "sigma": round(sigma, 4)}
-
-#     thresholds[str(mold)] = mold_dict
-
-# # 저장
-# with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-#     json.dump(thresholds, f, ensure_ascii=False, indent=2, allow_nan=False)
-
-# print(f"✅ mold_code별 6시그마 저장 완료: {len(thresholds)}개 금형 → {OUTPUT_FILE}")
+        return ui.div(
+            {"style": (
+                "font-size:12px; color:#333; line-height:1.4; "
+                "max-height:260px; overflow-y:auto; background:#f8f9fa; "
+                "padding:6px; border-radius:6px; border:1px solid #ddd;"
+            )},
+            ui.HTML(table_html)
+        )
 
 # ======== 앱 실행 ========
 app = App(app_ui, server, static_assets=app_dir / "www")

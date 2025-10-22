@@ -316,3 +316,9 @@ footer {
     background: transparent !important;
     box-shadow: none !important;
 }
+
+/* recent_data_table 전용 */
+#recent_data_table td:hover {
+    cursor: pointer !important;
+    background-color: rgba(0, 123, 255, 0.08);
+}
