@@ -17,8 +17,8 @@ except UnicodeDecodeError:
 streaming_df["real_time"] = pd.to_datetime(streaming_df["real_time"], errors="coerce")
 kf_streaming_df["real_time"] = pd.to_datetime(kf_streaming_df["real_time"], errors="coerce")
 
-streaming_df.loc[streaming_df["shift"] == "night", "shift"] = "야간"
-streaming_df.loc[streaming_df["shift"] == "day", "shift"] = "주간"
+streaming_df.loc[streaming_df["shift"] == "night", "shift"] = "Night"
+streaming_df.loc[streaming_df["shift"] == "day", "shift"] = "Day"
 # # 오름차순 정렬
 # streaming_df = streaming_df.sort_values(by="real_time", ascending=True).reset_index(drop=True)
 # streaming_df.to_csv("./data/test.csv", encoding="utf-8-sig", index=False)

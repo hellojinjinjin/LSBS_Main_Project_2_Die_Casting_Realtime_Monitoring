@@ -364,8 +364,8 @@ drop_cols = [
     "real_time",   # registration_time → real_time
     "passorfail",
     # "count",
-    # "global_count",
-    # "monthly_count",
+    "global_count",
+    "monthly_count",
     # "speed_ratio",
 	# "pressure_speed_ratio",
     # "shift",
@@ -1227,8 +1227,8 @@ def main_page(selected_tab: str):
                             ui.card_header("공정 상태 관련"),
                             ui.layout_columns(
                                 ui.input_numeric("count", "일조 누적 제품 개수", value=int(df_predict["count"].mean())),
-                                ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
-                                ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
+                                # ui.input_numeric("monthly_count", "월간 누적 제품 개수", value=int(df_predict["monthly_count"].mean())),
+                                # ui.input_numeric("global_count", "전체 누적 제품 개수", value=int(df_predict["global_count"].mean())),
                                 ui.input_numeric("speed_ratio", "상하 구역 속도 비율", value=int(df_predict["speed_ratio"].mean())),
                                 ui.input_numeric("pressure_speed_ratio", "주조 압력 속도 비율", value=int(df_predict["pressure_speed_ratio"].mean())),
                                 make_select("working", "장비 가동 여부"),
@@ -3379,9 +3379,9 @@ def server(input, output, session):
 
     def _get_shift(t):
         if datetime.time(8,0) <= t.time() < datetime.time(20,0):
-            return "주간"
+            return "Day"
         else:
-            return "야간"
+            return "Night"
 
     streaming_df["prod_date"] = streaming_df["real_time"].apply(_get_prod_date)
     streaming_df["shift"] = streaming_df["real_time"].apply(_get_shift)
@@ -3417,10 +3417,10 @@ def server(input, output, session):
 
         # --- 현재 교대 구간 ---
         if datetime.time(8,0) <= now.time() < datetime.time(20,0):
-            current_shift = "주간"
+            current_shift = "Day"
             shift_start = datetime.datetime.combine(now.date(), datetime.time(8,0))
         else:
-            current_shift = "야간"
+            current_shift = "Night"
             if now.time() >= datetime.time(20,0):
                 shift_start = datetime.datetime.combine(now.date(), datetime.time(20,0))
             else:
@@ -3567,7 +3567,7 @@ def server(input, output, session):
                         "text-align:center; font-family:'NanumGothic'; width:100%; max-width:100%;"
                     )
                 },
-                ui.h4("🤖 실시간 품질 판정", style="margin-bottom:10px; color:#333;"),
+                ui.h4("실시간 품질 판정", style="margin-bottom:10px; color:#333;"),
                 ui.h3("⏸ 데이터 대기 중...", style="color:gray; margin-bottom:6px;"),
                 ui.h5("누적 불량률: -%", style="color:#888; margin-bottom:6px;"),
                 ui.p("데이터 시각: -", style="color:#aaa; font-size:14px; margin-top:6px;"),
@@ -3943,7 +3943,7 @@ def server(input, output, session):
      loading.set(True)
      try:
         X = get_input_data()
-        proba = model.predict_proba(X)[0, 1]
+        proba = model_xgb.predict_proba(X)[0, 1]
         last_proba.set(proba)
 
         # === 불량 기여 요인 계산 ===
@@ -4021,7 +4021,7 @@ def server(input, output, session):
             return
 
         top = factors.head(5).copy()
-        exclude_vars = ["count", "monthly_count", "global_count"]
+        exclude_vars = ["count"]
         use_num_cols = [c for c in num_cols if c not in exclude_vars]
 
         baseline = df_predict[df_predict["passorfail"] == 0][use_num_cols].mean()
@@ -4045,7 +4045,7 @@ def server(input, output, session):
         # === ② 개선 후 자동 예측 ===
         try:
             X_new = get_input_data()
-            proba_new = model.predict_proba(X_new)[0, 1]
+            proba_new = model_xgb.predict_proba(X_new)[0, 1]
             last_proba.set(proba_new)
             prediction_done.set(True)  # 개선된 판정 결과 섹션 표시용
 
@@ -4144,6 +4144,53 @@ def server(input, output, session):
         except Exception:
             plt.figure()
             plt.text(0.5,0.5,"공정별 그래프 생성 불가",ha="center",va="center")
+
+    @reactive.effect
+    def _auto_fill_inputs_from_selected_row():
+        """원인 분석 탭에서 전달된 행 데이터로 입력창 자동 채우기"""
+        row = selected_row_for_prediction()
+        if not row:
+            return  # 선택된 데이터가 없을 때는 아무것도 안 함
+
+        print("🧩 자동 입력 채움 시작...")
+
+        # === 숫자형 입력 업데이트 ===
+        numeric_inputs = [
+            "count", "speed_ratio", "pressure_speed_ratio",
+            "molten_temp", "sleeve_temperature", "EMS_operation_time",
+            "low_section_speed", "high_section_speed", "molten_volume",
+            "cast_pressure", "upper_mold_temp1", "upper_mold_temp2", "upper_mold_temp3",
+            "lower_mold_temp1", "lower_mold_temp2", "lower_mold_temp3",
+            "Coolant_temperature", "facility_operation_cycleTime",
+            "production_cycletime", "biscuit_thickness", "physical_strength",
+        ]
+
+        for name in numeric_inputs:
+            val = row.get(name)
+            if val is not None and not pd.isna(val):
+                try:
+                    ui.update_numeric(name, value=float(val))
+                except Exception:
+                    try:
+                        ui.update_slider(name, value=float(val))
+                    except:
+                        pass
+
+        # === 선택형 입력 업데이트 ===
+        select_inputs = [
+            "working", "emergency_stop", "tryshot_signal",
+            "shift", "heating_furnace", "mold_code"
+        ]
+
+        for name in select_inputs:
+            val = row.get(name)
+            if val is not None:
+                try:
+                    ui.update_select(name, selected=str(val))
+                except Exception:
+                    pass
+
+        print("✅ 입력창 자동 채움 완료")
             
     # ===== 품질 모니터링용 SPC 관리도 =====
     def calc_xr_chart(df, var='cast_pressure', subgroup_size=5):
